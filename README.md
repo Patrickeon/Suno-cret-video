@@ -33,8 +33,8 @@ sudo apt install ffmpeg
 ### 2. 코드 받기
 
 ```bash
-git clone https://github.com/<your-name>/music-video-maker.git
-cd music-video-maker
+git clone https://github.com/Patrickeon/Suno-cret-video.git
+cd Suno-cret-video
 ```
 
 ### 3. Python 라이브러리 (선택)
