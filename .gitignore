@@ -1,0 +1,27 @@
+# 생성 결과물 (영상/썸네일/프레임/자막 임시파일)
+*.mp4
+*.mkv
+*.webm
+*_thumb.jpg
+frame_*.png
+_sub.ass
+_wm.txt
+_ttl.txt
+_art.txt
+draft.lrc
+
+# 예외: examples 폴더의 샘플 입력은 추적
+!examples/*.jpg
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

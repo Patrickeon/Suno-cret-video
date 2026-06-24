@@ -1,0 +1,149 @@
+# 🎵 music-video-maker
+
+음원 파일 + 가사 → **영상 + 음원 + 자막**이 한 번에 나오는 뮤직비디오 생성 CLI.
+
+Suno 등 AI로 만든 곡을 유튜브에 올릴 때 사용합니다. ffmpeg 비주얼라이저 기반이라
+무거운 AI 모델 없이도 곡 하나 + 가사만 있으면 즉시 뮤직비디오가 나옵니다.
+
+- 🎚️ 오디오 파형 / 스펙트럼 비주얼라이저
+- 📝 가사 자막 자동 싱크 (.lrc / .txt 균등분배 / AI 강제정렬)
+- 🖼️ 배경 이미지 켄 번스(줌·팬) + 다중 이미지 크로스페이드
+- 📱 가로 1080p 롱폼 / 세로 9:16 쇼츠(클라이맥스 구간만) 출력
+- 🏷️ 1280×720 썸네일 + 워터마크/로고 자동 생성
+
+---
+
+## 설치
+
+### 1. ffmpeg (필수)
+
+`ffmpeg` 와 `ffprobe` 가 PATH 에 있어야 합니다.
+
+```powershell
+# Windows (winget)
+winget install Gyan.FFmpeg
+```
+```bash
+# macOS
+brew install ffmpeg
+# Ubuntu/Debian
+sudo apt install ffmpeg
+```
+
+### 2. 코드 받기
+
+```bash
+git clone https://github.com/<your-name>/music-video-maker.git
+cd music-video-maker
+```
+
+### 3. Python 라이브러리 (선택)
+
+> 기본 기능(영상/자막/썸네일/쇼츠)은 **추가 라이브러리가 전혀 필요 없습니다** — 표준 라이브러리 + ffmpeg 로 동작.
+
+가사 **자동 정렬(`--align auto`)** 기능을 쓸 때만:
+
+```bash
+pip install -r requirements.txt
+```
+
+(stable-ts + torch ~2GB 를 받습니다. GPU 없으면 먼저
+`pip install torch --index-url https://download.pytorch.org/whl/cpu` 로 가볍게.)
+
+---
+
+## 빠른 시작
+
+리포에 동봉된 예제 자산(`examples/`)으로 바로 테스트할 수 있습니다:
+
+```bash
+# 가장 간단 (단색 배경 + 파형 + 가사)
+python make_mv.py --audio examples/test.mp3 --lyrics examples/test_lyrics.txt --out mv.mp4
+
+# 롱폼: 배경 이미지 + 썸네일 + 워터마크
+python make_mv.py --audio examples/test.mp3 --lyrics examples/test_lyrics.txt \
+    --bg examples/bg1.jpg --title "곡 제목" --artist "아티스트" \
+    --watermark "@내채널" --out mv.mp4
+
+# 쇼츠(세로 9:16): 2초부터 4초 구간만
+python make_mv.py --audio examples/test.mp3 --lyrics examples/test_lyrics.txt \
+    --bg examples/bg1.jpg --shorts --clip-start 0:02 --clip-len 4 --out short.mp4
+```
+
+실제 사용 시엔 `examples/...` 를 본인 곡/이미지 경로로 바꾸면 됩니다.
+
+---
+
+## 가사 싱크 — 3가지 방법
+
+1. **`.lrc` (가장 정확)** — `[mm:ss.xx]가사` 타임코드 파일을 그대로 사용.
+2. **`.txt` 균등분배 (초안, 즉시)** — 가사 줄을 곡 길이에 맞춰 자동 분배.
+   `--intro`(첫 가사 전 인트로 초), `--outro`(끝 여백)로 보정.
+3. **`--align auto` 강제정렬** — stable-ts 로 가사를 오디오에 맞춰 자동 정렬.
+
+### 추천 워크플로우 (정확 + 빠름)
+
+```bash
+# 1) 자동 정렬로 초안 LRC 생성
+python make_mv.py --audio song.mp3 --lyrics song.txt --align auto --lrc-out draft.lrc
+# 2) draft.lrc 에서 어긋난 몇 줄만 손으로 수정
+# 3) 손본 LRC로 최종 렌더
+python make_mv.py --audio song.mp3 --lyrics draft.lrc --bg art.jpg --out mv.mp4
+```
+
+`.txt` 만으로 `--lrc-out` 을 쓰면 균등분배 초안 LRC가 나옵니다 (정렬 설치 없이도 가능).
+
+---
+
+## 옵션
+
+| 옵션 | 설명 |
+|---|---|
+| `--audio` | 음원 (mp3/wav/flac) — **필수** |
+| `--lyrics` | 가사 (.txt 또는 .lrc) |
+| `--bg a.jpg b.jpg ...` | 배경 이미지 (여러 장이면 크로스페이드) |
+| `--out` | 출력 mp4 (기본 mv.mp4) |
+| `--viz` | `waves`(기본) / `cqt` / `spectrum` / `none` |
+| `--no-kenburns` | 배경 줌/팬 끄기 (기본 켜짐) |
+| `--shorts` | 세로 9:16 (1080×1920) 출력 |
+| `--clip-start` / `--clip-len` | 구간 추출 (`1:05` 또는 초, 기본 길이 30s) |
+| `--title` / `--artist` | 주면 1280×720 썸네일 자동 생성 |
+| `--watermark` | 우하단 워터마크 텍스트 |
+| `--logo logo.png` | 우하단 로고 (watermark보다 우선) |
+| `--align auto` | stable-ts 가사 강제정렬 |
+| `--align-model` | 정렬 모델 (tiny/base/small/medium, 기본 base) |
+| `--lrc-out` | 초안 LRC만 만들고 종료 |
+| `--font` | 자막 폰트 (기본 Malgun Gothic) |
+
+---
+
+## 프로젝트 구조
+
+```
+music-video-maker/
+├── make_mv.py          # 메인 CLI
+├── requirements.txt    # (선택) 가사 자동정렬용 의존성
+├── README.md
+├── LICENSE
+└── examples/           # 테스트용 샘플 음원/가사/배경
+    ├── test.mp3
+    ├── test_lyrics.txt
+    ├── bg1.jpg
+    └── bg2.jpg
+```
+
+---
+
+## 유튜브 발행 체크리스트
+
+- [ ] **Suno 유료 플랜**에서 만든 곡인지 확인 (무료 플랜 곡은 상업 사용권 없음)
+- [ ] 업로드 시 **AI 생성/변경 콘텐츠 고지** 체크
+- [ ] YPP 자격: 구독자 1,000 + 시청 4,000h (또는 쇼츠 1,000만 조회/90일)
+- [ ] 롱폼 1개 + 쇼츠 여러 개(클라이맥스)로 쪼개 업로드해 채널 성장
+- [ ] (선택) DistroKid/TuneCore 등으로 음원 배급 + Content ID 등록
+
+---
+
+## License
+
+MIT

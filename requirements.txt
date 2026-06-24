@@ -1,0 +1,13 @@
+# ────────────────────────────────────────────────────────────────
+# 기본 기능(영상/자막/썸네일/쇼츠)은 pip 패키지가 전혀 필요 없습니다.
+# Python 표준 라이브러리 + ffmpeg 만으로 동작합니다.
+#
+# 아래 stable-ts 는 "--align auto" (가사 자동 강제정렬) 에만 필요합니다.
+# 이 기능을 쓸 때만 설치하세요:  pip install -r requirements.txt
+#
+# stable-ts 는 torch(~2GB)를 함께 받습니다. GPU가 없으면 먼저 CPU 전용 torch 를
+# 받으면 가볍습니다:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# ────────────────────────────────────────────────────────────────
+
+stable-ts
