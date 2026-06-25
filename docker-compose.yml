@@ -1,0 +1,27 @@
+# 로컬에서 프로덕션과 동일한 컨테이너로 구동 (배포 전 검증용)
+#   docker compose up --build
+# 백엔드 http://localhost:8000 , 프론트 http://localhost:3000
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8080"
+    environment:
+      - ALLOWED_ORIGINS=http://localhost:3000
+      # - ANTHROPIC_API_KEY=sk-ant-...   # AI 편집 쓰려면 주석 해제
+    volumes:
+      - ./backend/data:/app/backend/data   # 잡/설정 영속화
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # 브라우저가 호출할 백엔드 주소 (빌드타임에 박힘)
+        NEXT_PUBLIC_API_BASE: http://localhost:8000
+    ports:
+      - "3000:8080"
+    depends_on:
+      - backend

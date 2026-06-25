@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
 
@@ -13,6 +13,15 @@ interface Job {
   video: boolean;
   thumb: boolean;
 }
+interface JobSummary {
+  id: string;
+  status: JobStatus;
+  video: boolean;
+  thumb: boolean;
+  created: number;
+  title: string;
+  shorts: boolean;
+}
 interface ChatMsg {
   role: "user" | "assistant";
   text: string;
@@ -24,13 +33,20 @@ interface Settings {
   video_provider: string;
   video_key_set: boolean;
 }
+interface Toast {
+  id: number;
+  text: string;
+  kind: "info" | "success" | "error";
+}
 
 const SUGGESTIONS = [
   "쇼츠 세로형으로 만들어줘",
-  "자막을 막대 스펙트럼으로 바꿔줘",
-  "배경 켄번스 효과 꺼줘",
+  "막대 스펙트럼으로 바꿔줘",
+  "배경 켄번스 꺼줘",
   "후렴부터 30초만 잘라줘",
 ];
+
+let toastSeq = 0;
 
 export default function Home() {
   const [mode, setMode] = useState<"local" | "ai">("local");
@@ -52,30 +68,48 @@ export default function Home() {
   const [watermark, setWatermark] = useState("");
   const [align, setAlign] = useState(false);
 
-  // 잡 상태
+  // 잡 / 결과
   const [job, setJob] = useState<Job | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [err, setErr] = useState("");
+  const [recent, setRecent] = useState<JobSummary[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // AI 편집 채팅
+  // AI 채팅
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
 
-  // 설정 (BYOK)
+  // 설정 / 토스트
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const toast = useCallback((text: string, kind: Toast["kind"] = "info") => {
+    const id = ++toastSeq;
+    setToasts((t) => [...t, { id, text, kind }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
+  }, []);
+
+  const refreshRecent = useCallback(() => {
+    fetch(`${API}/api/jobs`)
+      .then((r) => r.json())
+      .then((d) => setRecent(d.jobs ?? []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
-    fetch(`${API}/api/settings`)
-      .then((r) => r.json())
-      .then(setSettings)
-      .catch(() => {});
+    fetch(`${API}/api/settings`).then((r) => r.json()).then(setSettings).catch(() => {});
+    refreshRecent();
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, []);
+  }, [refreshRecent]);
+
+  // 미리보기 URL
+  const audioUrl = useMemo(() => (audio ? URL.createObjectURL(audio) : ""), [audio]);
+  const bgUrls = useMemo(() => bgFiles.map((f) => URL.createObjectURL(f)), [bgFiles]);
+  useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
+  useEffect(() => () => { bgUrls.forEach((u) => URL.revokeObjectURL(u)); }, [bgUrls]);
 
   async function saveSettings(patch: Record<string, string>) {
     const r = await fetch(`${API}/api/settings`, {
@@ -84,6 +118,7 @@ export default function Home() {
       body: JSON.stringify(patch),
     });
     setSettings(await r.json());
+    toast("설정이 저장되었습니다.", "success");
   }
 
   function poll(id: string) {
@@ -96,6 +131,8 @@ export default function Home() {
         setJob(j);
         if (j.status === "done" || j.status === "error") {
           if (pollRef.current) clearInterval(pollRef.current);
+          refreshRecent();
+          toast(j.status === "done" ? "렌더 완료 ✓" : "렌더 실패", j.status === "done" ? "success" : "error");
         }
       } catch {
         /* 일시 오류 무시 */
@@ -104,9 +141,8 @@ export default function Home() {
   }
 
   async function generate() {
-    setErr("");
     if (!audio) {
-      setErr("음원 파일을 선택하세요.");
+      toast("음원 파일을 선택하세요.", "error");
       return;
     }
     setSubmitting(true);
@@ -128,12 +164,13 @@ export default function Home() {
       fd.append("align", align ? "auto" : "none");
 
       const r = await fetch(`${API}/api/render`, { method: "POST", body: fd });
-      if (!r.ok) throw new Error(`서버 오류 (${r.status})`);
-      const { job_id } = await r.json();
-      setJob({ id: job_id, status: "queued", error: null, log: "", video: false, thumb: false });
-      poll(job_id);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `서버 오류 (${r.status})`);
+      setJob({ id: data.job_id, status: "queued", error: null, log: "", video: false, thumb: false });
+      poll(data.job_id);
+      toast("렌더를 시작했어요.", "info");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "요청 실패");
+      toast(e instanceof Error ? e.message : "요청 실패", "error");
     } finally {
       setSubmitting(false);
     }
@@ -143,10 +180,7 @@ export default function Home() {
     const msg = chatInput.trim();
     if (!msg) return;
     if (!job || job.status !== "done") {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", text: "⚠ 먼저 '로컬 생성'으로 기본 영상을 만든 뒤 편집을 요청하세요." },
-      ]);
+      toast("먼저 '로컬 생성'으로 기본 영상을 만든 뒤 편집을 요청하세요.", "error");
       return;
     }
     const history = messages.map((m) => ({ role: m.role, content: m.text }));
@@ -165,92 +199,140 @@ export default function Home() {
       setJob({ id: data.job_id, status: "queued", error: null, log: "", video: false, thumb: false });
       poll(data.job_id);
     } catch (e) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", text: "⚠ " + (e instanceof Error ? e.message : "에이전트 오류") },
-      ]);
+      setMessages((m) => [...m, { role: "assistant", text: "⚠ " + (e instanceof Error ? e.message : "에이전트 오류") }]);
     } finally {
       setAgentBusy(false);
+    }
+  }
+
+  async function openJob(id: string) {
+    try {
+      const j: Job = await (await fetch(`${API}/api/jobs/${id}`)).json();
+      setJob(j);
+    } catch {
+      toast("불러오기 실패", "error");
     }
   }
 
   const busy = job?.status === "queued" || job?.status === "running";
 
   return (
-    <div className="min-h-full bg-gradient-to-b from-neutral-950 to-neutral-900 text-neutral-100">
-      <header className="border-b border-white/10 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🎬</span>
-          <h1 className="text-lg font-semibold tracking-tight">Suno MV Studio</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex rounded-lg bg-white/5 p-1 text-sm">
+    <div className="min-h-full bg-[radial-gradient(80%_60%_at_50%_-10%,#1e1b4b_0%,#0a0a0f_55%)] text-neutral-100">
+      {/* 토스트 */}
+      <div className="fixed right-4 top-4 z-[60] flex flex-col gap-2">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`rounded-lg px-4 py-2.5 text-sm shadow-lg backdrop-blur ${
+              t.kind === "success"
+                ? "bg-emerald-500/90"
+                : t.kind === "error"
+                ? "bg-red-500/90"
+                : "bg-white/15"
+            }`}
+          >
+            {t.text}
+          </div>
+        ))}
+      </div>
+
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-black/30 px-6 py-3.5 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-lg shadow-lg">
+              🎬
+            </span>
+            <div>
+              <h1 className="text-base font-semibold leading-tight tracking-tight">Suno MV Studio</h1>
+              <p className="text-[11px] text-neutral-400">음원 + 가사 → AI 뮤직비디오</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex rounded-lg bg-white/5 p-1 text-sm ring-1 ring-white/10">
+              <button
+                onClick={() => setMode("local")}
+                className={`rounded-md px-3 py-1.5 transition ${mode === "local" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
+              >
+                로컬 생성
+              </button>
+              <button
+                onClick={() => setMode("ai")}
+                className={`rounded-md px-3 py-1.5 transition ${mode === "ai" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
+              >
+                AI 편집 ✨
+              </button>
+            </div>
             <button
-              onClick={() => setMode("local")}
-              className={`px-3 py-1.5 rounded-md transition ${mode === "local" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
+              onClick={() => setShowSettings(true)}
+              title="API 키 설정"
+              className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 ring-1 ring-white/10 hover:bg-white/10"
             >
-              로컬 생성
-            </button>
-            <button
-              onClick={() => setMode("ai")}
-              className={`px-3 py-1.5 rounded-md transition ${mode === "ai" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
-            >
-              AI 편집 ✨
+              ⚙️
+              {settings && (settings.llm_key_set || settings.video_key_set) && (
+                <span className="ml-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle" />
+              )}
             </button>
           </div>
-          <button
-            onClick={() => setShowSettings(true)}
-            title="API 키 설정"
-            className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 hover:bg-white/10"
-          >
-            ⚙️ 설정
-            {settings && (settings.llm_key_set || settings.video_key_set) && (
-              <span className="ml-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle" />
-            )}
-          </button>
         </div>
       </header>
 
       {showSettings && (
-        <SettingsModal
-          settings={settings}
-          onClose={() => setShowSettings(false)}
-          onSave={saveSettings}
-        />
+        <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onSave={saveSettings} />
       )}
 
-      <main className="mx-auto max-w-6xl px-6 py-8 grid gap-8 lg:grid-cols-2">
-        {/* 왼쪽: 로컬 폼 또는 AI 채팅 */}
+      <main className="mx-auto grid max-w-6xl gap-7 px-6 py-8 lg:grid-cols-2">
+        {/* 왼쪽 */}
         <section className="space-y-6">
           {mode === "local" ? (
             <>
-              <Card title="1. 음원 / 가사">
-                <Field label="음원 파일 *">
-                  <input type="file" accept="audio/*" onChange={(e) => setAudio(e.target.files?.[0] ?? null)} className={fileCls} />
-                </Field>
+              <Card title="1. 음원 / 가사" step="①">
+                <Dropzone
+                  label="음원 파일"
+                  hint="mp3 · wav · flac 드래그 또는 클릭"
+                  accept="audio/*"
+                  icon="🎵"
+                  files={audio ? [audio] : []}
+                  onFiles={(fs) => setAudio(fs[0] ?? null)}
+                />
+                {audio && <audio controls src={audioUrl} className="w-full" />}
                 <Field label="가사 (텍스트)">
                   <textarea
                     value={lyricsText}
                     onChange={(e) => setLyricsText(e.target.value)}
-                    placeholder="한 줄에 한 가사씩 입력하면 곡 길이에 맞춰 자동 분배됩니다."
-                    rows={5}
+                    placeholder="한 줄에 한 가사씩 — 곡 길이에 맞춰 자동 분배됩니다."
+                    rows={4}
                     className={`${inputCls} resize-y`}
                   />
                 </Field>
-                <Field label="또는 가사 파일 (.lrc 정확 / .txt)">
-                  <input type="file" accept=".lrc,.txt" onChange={(e) => setLyricsFile(e.target.files?.[0] ?? null)} className={fileCls} />
-                </Field>
-                <label className="flex items-center gap-2 text-sm text-neutral-300">
-                  <input type="checkbox" checked={align} onChange={(e) => setAlign(e.target.checked)} />
-                  AI 자동 가사 정렬 (백엔드에 stable-ts 필요)
-                </label>
+                <Dropzone
+                  label="또는 가사 파일 (.lrc / .txt)"
+                  hint=".lrc 면 정확한 싱크"
+                  accept=".lrc,.txt"
+                  icon="📝"
+                  files={lyricsFile ? [lyricsFile] : []}
+                  onFiles={(fs) => setLyricsFile(fs[0] ?? null)}
+                />
+                <Toggle checked={align} onChange={setAlign} label="AI 자동 가사 정렬 (백엔드 stable-ts 필요)" />
               </Card>
 
-              <Card title="2. 배경 / 비주얼">
-                <Field label="배경 이미지 (여러 장 = 크로스페이드)">
-                  <input type="file" accept="image/*" multiple onChange={(e) => setBgFiles(Array.from(e.target.files ?? []))} className={fileCls} />
-                  {bgFiles.length > 0 && <p className="mt-1 text-xs text-neutral-400">{bgFiles.length}개 선택됨</p>}
-                </Field>
+              <Card title="2. 배경 / 비주얼" step="②">
+                <Dropzone
+                  label="배경 이미지 (여러 장 = 크로스페이드)"
+                  hint="jpg · png · webp"
+                  accept="image/*"
+                  icon="🖼️"
+                  multiple
+                  files={bgFiles}
+                  onFiles={setBgFiles}
+                />
+                {bgUrls.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {bgUrls.map((u, i) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={i} src={u} alt="" className="h-16 w-24 rounded-md object-cover ring-1 ring-white/10" />
+                    ))}
+                  </div>
+                )}
                 <Field label="비주얼라이저">
                   <select value={viz} onChange={(e) => setViz(e.target.value)} className={inputCls}>
                     <option value="waves">파형 (waves)</option>
@@ -259,19 +341,13 @@ export default function Home() {
                     <option value="none">없음</option>
                   </select>
                 </Field>
-                <label className="flex items-center gap-2 text-sm text-neutral-300">
-                  <input type="checkbox" checked={kenburns} onChange={(e) => setKenburns(e.target.checked)} />
-                  배경 켄 번스(줌·팬) 효과
-                </label>
+                <Toggle checked={kenburns} onChange={setKenburns} label="배경 켄 번스(줌·팬) 효과" />
               </Card>
 
-              <Card title="3. 포맷 / 메타">
-                <label className="flex items-center gap-2 text-sm text-neutral-300">
-                  <input type="checkbox" checked={shorts} onChange={(e) => setShorts(e.target.checked)} />
-                  쇼츠 세로형 (9:16, 1080×1920)
-                </label>
+              <Card title="3. 포맷 / 메타" step="③">
+                <Toggle checked={shorts} onChange={setShorts} label="쇼츠 세로형 (9:16, 1080×1920)" />
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="클립 시작 (mm:ss, 선택)">
+                  <Field label="클립 시작 (mm:ss)">
                     <input value={clipStart} onChange={(e) => setClipStart(e.target.value)} placeholder="예: 1:05" className={inputCls} />
                   </Field>
                   <Field label="클립 길이(초)">
@@ -291,53 +367,38 @@ export default function Home() {
                 </Field>
               </Card>
 
-              {err && <p className="text-sm text-red-400">{err}</p>}
-
               <button
                 onClick={generate}
                 disabled={submitting || busy}
-                className="w-full rounded-xl bg-indigo-500 px-4 py-3 font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-50"
+                className="w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-3.5 font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110 disabled:opacity-50"
               >
                 {busy ? "렌더링 중…" : "🎬 뮤직비디오 생성"}
               </button>
             </>
           ) : (
-            <Card title="AI 편집 ✨">
+            <Card title="AI 편집 ✨" step="🤖">
               <p className="text-xs text-neutral-400">
-                먼저 <b>로컬 생성</b>으로 기본 영상을 만든 뒤, 여기서 자연어로 수정을 요청하세요.
-                {!job && <span className="text-amber-300"> (현재 편집할 프로젝트가 없습니다)</span>}
+                먼저 <b>로컬 생성</b>으로 기본 영상을 만든 뒤, 자연어로 수정을 요청하세요.
+                {!job && <span className="text-amber-300"> (편집할 프로젝트 없음)</span>}
               </p>
-
               <div className="flex flex-wrap gap-2">
                 {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setChatInput(s)}
-                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-neutral-300 hover:bg-white/10"
-                  >
+                  <button key={s} onClick={() => setChatInput(s)} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-neutral-300 hover:bg-white/10">
                     {s}
                   </button>
                 ))}
               </div>
-
-              <div className="h-72 space-y-3 overflow-y-auto rounded-lg bg-black/30 p-3">
-                {messages.length === 0 && (
-                  <p className="text-xs text-neutral-500">예: &ldquo;쇼츠로 만들어줘&rdquo;, &ldquo;스펙트럼으로 바꿔줘&rdquo;</p>
-                )}
+              <div className="h-72 space-y-3 overflow-y-auto rounded-xl bg-black/30 p-3 ring-1 ring-white/10">
+                {messages.length === 0 && <p className="text-xs text-neutral-500">예: &ldquo;쇼츠로 만들어줘&rdquo;, &ldquo;스펙트럼으로 바꿔줘&rdquo;</p>}
                 {messages.map((m, i) => (
                   <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
-                    <span
-                      className={`inline-block max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                        m.role === "user" ? "bg-indigo-500/80 text-white" : "bg-white/10 text-neutral-100"
-                      }`}
-                    >
+                    <span className={`inline-block max-w-[85%] rounded-2xl px-3 py-2 text-sm ${m.role === "user" ? "bg-indigo-500/80 text-white" : "bg-white/10"}`}>
                       {m.text}
                     </span>
                   </div>
                 ))}
                 {agentBusy && <p className="text-xs text-neutral-400">에이전트가 생각 중…</p>}
               </div>
-
               <div className="flex gap-2">
                 <input
                   value={chatInput}
@@ -346,11 +407,7 @@ export default function Home() {
                   placeholder="예: 자막 더 크게, 후렴부터 쇼츠로…"
                   className={inputCls}
                 />
-                <button
-                  onClick={sendAgent}
-                  disabled={agentBusy}
-                  className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:opacity-50"
-                >
+                <button onClick={sendAgent} disabled={agentBusy} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:opacity-50">
                   보내기
                 </button>
               </div>
@@ -358,71 +415,89 @@ export default function Home() {
           )}
         </section>
 
-        {/* 오른쪽: 결과 */}
-        <section className="space-y-4">
+        {/* 오른쪽 */}
+        <section className="space-y-6 lg:sticky lg:top-24 lg:self-start">
           <Card title="결과 미리보기">
-            {!job && <p className="text-sm text-neutral-400">왼쪽에서 입력 후 생성을 누르면 여기에 영상이 나옵니다.</p>}
-
-            {job && busy && (
-              <div className="flex items-center gap-3 text-sm text-neutral-300">
-                <span className="h-3 w-3 animate-pulse rounded-full bg-indigo-400" />
-                {job.status === "queued" ? "대기 중…" : "렌더링 중…"} (job {job.id})
+            {!job && (
+              <div className="grid h-56 place-items-center rounded-xl border border-dashed border-white/10 text-sm text-neutral-500">
+                생성하면 여기에 영상이 표시됩니다 🎥
               </div>
             )}
-
+            {job && busy && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm text-neutral-300">
+                  <Spinner /> {job.status === "queued" ? "대기 중…" : "렌더링 중…"}
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full w-1/3 animate-[loading_1.2s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400" />
+                </div>
+              </div>
+            )}
             {job?.status === "error" && (
               <div className="space-y-2">
                 <p className="text-sm text-red-400">렌더 실패: {job.error}</p>
-                {job.log && (
-                  <pre className="max-h-48 overflow-auto rounded-lg bg-black/40 p-3 text-xs whitespace-pre-wrap text-neutral-400">
-                    {job.log}
-                  </pre>
-                )}
+                {job.log && <pre className="max-h-48 overflow-auto rounded-lg bg-black/40 p-3 text-xs whitespace-pre-wrap text-neutral-400">{job.log}</pre>}
               </div>
             )}
-
             {job?.status === "done" && job.video && (
               <div className="space-y-3">
-                <video
-                  src={`${API}/api/jobs/${job.id}/video`}
-                  controls
-                  className={`w-full rounded-lg bg-black ${shorts ? "mx-auto max-h-[70vh] aspect-[9/16]" : "aspect-video"}`}
-                />
-                <div className="flex flex-wrap gap-3 text-sm">
-                  <a href={`${API}/api/jobs/${job.id}/video`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">
-                    ⬇ 영상 다운로드
-                  </a>
-                  {job.thumb && (
-                    <a href={`${API}/api/jobs/${job.id}/thumb`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">
-                      ⬇ 썸네일 다운로드
-                    </a>
-                  )}
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <video src={`${API}/api/jobs/${job.id}/video`} controls className="mx-auto max-h-[68vh] w-full rounded-xl bg-black" />
+                <div className="flex flex-wrap gap-2 text-sm">
+                  <a href={`${API}/api/jobs/${job.id}/video`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">⬇ 영상</a>
+                  {job.thumb && <a href={`${API}/api/jobs/${job.id}/thumb`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">⬇ 썸네일</a>}
+                  <button onClick={() => setMode("ai")} className="rounded-lg bg-indigo-500/80 px-3 py-2 text-white hover:bg-indigo-500">✨ AI로 수정</button>
                 </div>
               </div>
             )}
           </Card>
 
-          {job?.thumb && job.status === "done" && (
-            <Card title="썸네일">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`${API}/api/jobs/${job.id}/thumb`} alt="thumbnail" className="w-full rounded-lg" />
-            </Card>
-          )}
+          <Card title="최근 작업">
+            {recent.length === 0 ? (
+              <p className="text-xs text-neutral-500">아직 없음</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                {recent.slice(0, 9).map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => openJob(r.id)}
+                    title={r.title}
+                    className="group relative overflow-hidden rounded-lg ring-1 ring-white/10 hover:ring-indigo-400"
+                  >
+                    {r.thumb ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={`${API}/api/jobs/${r.id}/thumb`} alt="" className="aspect-video w-full object-cover" />
+                    ) : (
+                      <div className="grid aspect-video place-items-center bg-white/5 text-[10px] text-neutral-400">
+                        {r.status === "error" ? "실패" : r.status}
+                      </div>
+                    )}
+                    <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[10px] text-neutral-200">
+                      {r.shorts ? "📱 " : ""}{r.title || r.id}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
         </section>
       </main>
+
+      <style>{`@keyframes loading{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}`}</style>
     </div>
   );
 }
 
 const inputCls =
-  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-indigo-400";
-const fileCls =
-  "block w-full text-sm text-neutral-300 file:mr-3 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-neutral-100 hover:file:bg-white/20";
+  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40";
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({ title, step, children }: { title: string; step?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
-      <h2 className="text-sm font-semibold text-neutral-200">{title}</h2>
+    <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-xl shadow-black/20 backdrop-blur">
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-200">
+        {step && <span className="text-neutral-500">{step}</span>}
+        {title}
+      </h2>
       {children}
     </div>
   );
@@ -434,6 +509,80 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-xs font-medium text-neutral-400">{label}</span>
       {children}
     </label>
+  );
+}
+
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button onClick={() => onChange(!checked)} className="flex w-full items-center gap-3 text-left text-sm text-neutral-300">
+      <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${checked ? "bg-indigo-500" : "bg-white/15"}`}>
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? "left-[18px]" : "left-0.5"}`} />
+      </span>
+      {label}
+    </button>
+  );
+}
+
+function Spinner() {
+  return <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-indigo-400" />;
+}
+
+function Dropzone({
+  label,
+  hint,
+  accept,
+  icon,
+  multiple = false,
+  files,
+  onFiles,
+}: {
+  label: string;
+  hint: string;
+  accept: string;
+  icon: string;
+  multiple?: boolean;
+  files: File[];
+  onFiles: (f: File[]) => void;
+}) {
+  const [over, setOver] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="space-y-1.5">
+      <span className="text-xs font-medium text-neutral-400">{label}</span>
+      <div
+        onClick={() => ref.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setOver(false);
+          const fs = Array.from(e.dataTransfer.files);
+          if (fs.length) onFiles(multiple ? fs : [fs[0]]);
+        }}
+        className={`cursor-pointer rounded-xl border-2 border-dashed p-4 text-center transition ${
+          over ? "border-indigo-400 bg-indigo-500/10" : "border-white/15 hover:border-white/30 hover:bg-white/5"
+        }`}
+      >
+        <input
+          ref={ref}
+          type="file"
+          accept={accept}
+          multiple={multiple}
+          className="hidden"
+          onChange={(e) => onFiles(Array.from(e.target.files ?? []))}
+        />
+        {files.length === 0 ? (
+          <p className="text-sm text-neutral-400">
+            <span className="mr-1">{icon}</span>
+            <span className="text-neutral-300">{hint}</span>
+          </p>
+        ) : (
+          <p className="truncate text-sm text-neutral-200">
+            {icon} {files.length === 1 ? files[0].name : `${files.length}개 선택됨`}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -452,11 +601,9 @@ function SettingsModal({
   const [videoProvider, setVideoProvider] = useState(settings?.video_provider ?? "kaiber");
   const [videoKey, setVideoKey] = useState("");
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   async function save() {
     setSaving(true);
-    setSaved(false);
     const patch: Record<string, string> = {
       llm_provider: llmProvider,
       llm_model: llmModel,
@@ -468,23 +615,17 @@ function SettingsModal({
     setLlmKey("");
     setVideoKey("");
     setSaving(false);
-    setSaved(true);
+    onClose();
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-lg space-y-5 rounded-2xl border border-white/10 bg-neutral-900 p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg space-y-5 rounded-2xl border border-white/10 bg-neutral-900 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold">⚙️ API 키 설정 (BYOK)</h2>
           <button onClick={onClose} className="text-neutral-400 hover:text-neutral-200">✕</button>
         </div>
-        <p className="text-xs text-neutral-400">
-          키는 이 백엔드의 로컬 파일에만 저장되며 화면엔 다시 표시되지 않습니다(설정 여부만 표시).
-          provider는 언제든 바꿔 쓸 수 있어요.
-        </p>
+        <p className="text-xs text-neutral-400">키는 백엔드 로컬에만 저장되고 화면엔 다시 표시되지 않습니다(설정 여부만 표시). provider는 언제든 교체 가능.</p>
 
         <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
           <h3 className="text-sm font-medium">AI 편집 (LLM)</h3>
@@ -497,13 +638,7 @@ function SettingsModal({
             <input value={llmModel} onChange={(e) => setLlmModel(e.target.value)} className={inputCls} />
           </Field>
           <Field label={`API 키 ${settings?.llm_key_set ? "(설정됨 ✓ — 바꿀 때만 입력)" : "(미설정)"}`}>
-            <input
-              type="password"
-              value={llmKey}
-              onChange={(e) => setLlmKey(e.target.value)}
-              placeholder="sk-ant-..."
-              className={inputCls}
-            />
+            <input type="password" value={llmKey} onChange={(e) => setLlmKey(e.target.value)} placeholder="sk-ant-..." className={inputCls} />
           </Field>
         </div>
 
@@ -516,23 +651,12 @@ function SettingsModal({
             </select>
           </Field>
           <Field label={`API 키 ${settings?.video_key_set ? "(설정됨 ✓)" : "(미설정)"}`}>
-            <input
-              type="password"
-              value={videoKey}
-              onChange={(e) => setVideoKey(e.target.value)}
-              placeholder="키 입력"
-              className={inputCls}
-            />
+            <input type="password" value={videoKey} onChange={(e) => setVideoKey(e.target.value)} placeholder="키 입력" className={inputCls} />
           </Field>
         </div>
 
-        <div className="flex items-center justify-end gap-3">
-          {saved && <span className="text-sm text-emerald-400">저장됨 ✓</span>}
-          <button
-            onClick={save}
-            disabled={saving}
-            className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:opacity-50"
-          >
+        <div className="flex justify-end">
+          <button onClick={save} disabled={saving} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:opacity-50">
             {saving ? "저장 중…" : "저장"}
           </button>
         </div>

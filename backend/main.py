@@ -34,10 +34,48 @@ app.add_middleware(
 # 렌더는 CPU 무거움 -> 동시 2개로 제한
 EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
+# 업로드 제한
+MAX_AUDIO_MB = 60
+MAX_IMAGE_MB = 15
+AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+LYRICS_EXTS = {".txt", ".lrc"}
 
-def _save_upload(up: UploadFile, dest: str):
+
+class UploadError(Exception):
+    pass
+
+
+def _check_ext(filename: str, allowed: set, label: str):
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in allowed:
+        raise UploadError(f"{label} 형식이 아닙니다: {ext or '(없음)'} (허용: {', '.join(sorted(allowed))})")
+    return ext
+
+
+def _save_upload(up: UploadFile, dest: str, max_mb: int):
+    """크기 제한을 지키며 청크 저장. 초과 시 UploadError."""
+    limit = max_mb * 1024 * 1024
+    total = 0
     with open(dest, "wb") as f:
-        shutil.copyfileobj(up.file, f)
+        while True:
+            chunk = up.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                f.close()
+                os.remove(dest)
+                raise UploadError(f"파일이 너무 큽니다 (최대 {max_mb}MB)")
+            f.write(chunk)
+
+
+@app.on_event("startup")
+def _startup():
+    jobs.load_all()
+    removed = jobs.cleanup()
+    if removed:
+        print(f"[startup] 오래된 잡 {removed}개 정리")
 
 
 def _do_render(jid, d, audio, lyrics, bg_paths, opts):
@@ -95,26 +133,43 @@ async def create_render(
     watermark: str = Form(""),
     align: str = Form("none"),
 ):
-    jid, d = jobs.create_job()
+    # 입력 검증
+    try:
+        _check_ext(audio.filename, AUDIO_EXTS, "음원")
+        if lyrics_file is not None and lyrics_file.filename:
+            _check_ext(lyrics_file.filename, LYRICS_EXTS, "가사")
+        for b in bg or []:
+            if b is not None and b.filename:
+                _check_ext(b.filename, IMAGE_EXTS, "배경 이미지")
+    except UploadError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-    audio_path = os.path.join(d, "audio_" + (audio.filename or "input.mp3"))
-    _save_upload(audio, audio_path)
+    job_title = title.strip() or os.path.splitext(audio.filename or "untitled")[0]
+    jid, d = jobs.create_job(title=job_title)
+    jobs.update(jid, shorts=shorts)
 
-    lyrics_path = None
-    if lyrics_file is not None and lyrics_file.filename:
-        lyrics_path = os.path.join(d, lyrics_file.filename)
-        _save_upload(lyrics_file, lyrics_path)
-    elif lyrics_text.strip():
-        lyrics_path = os.path.join(d, "lyrics.txt")
-        with open(lyrics_path, "w", encoding="utf-8") as f:
-            f.write(lyrics_text)
+    try:
+        audio_path = os.path.join(d, "audio_" + (audio.filename or "input.mp3"))
+        _save_upload(audio, audio_path, MAX_AUDIO_MB)
 
-    bg_paths = []
-    for i, b in enumerate(bg or []):
-        if b is not None and b.filename:
-            p = os.path.join(d, f"bg{i}_{b.filename}")
-            _save_upload(b, p)
-            bg_paths.append(p)
+        lyrics_path = None
+        if lyrics_file is not None and lyrics_file.filename:
+            lyrics_path = os.path.join(d, lyrics_file.filename)
+            _save_upload(lyrics_file, lyrics_path, 2)
+        elif lyrics_text.strip():
+            lyrics_path = os.path.join(d, "lyrics.txt")
+            with open(lyrics_path, "w", encoding="utf-8") as f:
+                f.write(lyrics_text)
+
+        bg_paths = []
+        for i, b in enumerate(bg or []):
+            if b is not None and b.filename:
+                p = os.path.join(d, f"bg{i}_{b.filename}")
+                _save_upload(b, p, MAX_IMAGE_MB)
+                bg_paths.append(p)
+    except UploadError as e:
+        jobs.update(jid, status="error", error=str(e))
+        return JSONResponse({"error": str(e)}, status_code=400)
 
     opts = {
         "viz": viz,
@@ -176,11 +231,16 @@ def agent_edit(body: AgentBody):
         return JSONResponse({"error": f"에이전트 오류: {e}"}, status_code=500)
 
     new_opts = {**cur_opts, **patch}
-    njid, nd = jobs.create_job()
-    jobs.update(njid, assets=assets)
+    njid, nd = jobs.create_job(title=job.get("title", ""))
+    jobs.update(njid, assets=assets, shorts=bool(new_opts.get("shorts")))
     EXECUTOR.submit(_do_render, njid, nd, assets["audio"], assets["lyrics"],
                     assets["bg"], new_opts)
     return {"reply": reply, "job_id": njid, "options": new_opts, "patch": patch}
+
+
+@app.get("/api/jobs")
+def list_jobs():
+    return {"jobs": jobs.list_jobs()}
 
 
 @app.get("/api/jobs/{jid}")

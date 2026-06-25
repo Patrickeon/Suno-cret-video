@@ -6,6 +6,26 @@
 [브라우저] → 프론트(Cloud Run) → 백엔드(Cloud Run, ffmpeg 렌더 + AI 에이전트)
 ```
 
+## 배포 전 로컬 검증 (Docker Compose)
+
+프로덕션과 동일한 컨테이너로 먼저 로컬에서 띄워 확인:
+
+```bash
+docker compose up --build
+# 백엔드 http://localhost:8000 , 프론트 http://localhost:3000
+```
+
+이게 정상 동작하면 같은 이미지가 Cloud Run 에서도 동작한다.
+
+## CI 빌드 (Cloud Build)
+
+이미지 빌드+푸시는 `cloudbuild.yaml` 로:
+
+```bash
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=_REGION=asia-northeast3,_REPO=suno,_BACKEND_URL=https://<백엔드-URL>
+```
+
 ## 0. 사전 준비
 
 ```bash

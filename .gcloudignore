@@ -1,0 +1,13 @@
+# Cloud Build/Run 업로드에서 제외
+.git/
+**/node_modules/
+**/.next/
+backend/data/
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+*.mp4
+*.mkv
+*_thumb.jpg
+frontend/.env.local

@@ -6,7 +6,7 @@ FROM python:3.11-slim
 # ffmpeg + 한글 폰트(NanumGothic) 설치
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ffmpeg fonts-nanum fonts-nanum-coding \
+        ffmpeg fonts-nanum \
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
