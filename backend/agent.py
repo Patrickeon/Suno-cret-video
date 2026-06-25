@@ -93,15 +93,18 @@ def _blocks_to_dicts(content):
     return out
 
 
-def edit_video(current_opts, message, history=None, provider_name="claude", model=None):
+def edit_video(current_opts, message, history=None, provider_name="claude",
+               model=None, api_key=None):
     """자연어 편집 한 턴.
 
     반환: (reply_text, patch_dict)  patch_dict 는 변경된 옵션만.
-    ANTHROPIC_API_KEY 미설정 등 오류 시 예외 발생.
+    키 미설정 등 오류 시 예외 발생.
     """
     kw = {}
     if model:
         kw["model"] = model
+    if api_key:
+        kw["api_key"] = api_key
     provider = get_provider(provider_name, **kw)
 
     system = EDIT_SYSTEM + f"\n\n현재 옵션(JSON): {current_opts}"

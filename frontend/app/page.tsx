@@ -17,6 +17,13 @@ interface ChatMsg {
   role: "user" | "assistant";
   text: string;
 }
+interface Settings {
+  llm_provider: string;
+  llm_model: string;
+  llm_key_set: boolean;
+  video_provider: string;
+  video_key_set: boolean;
+}
 
 const SUGGESTIONS = [
   "쇼츠 세로형으로 만들어줘",
@@ -56,11 +63,28 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
 
+  // 설정 (BYOK)
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
+
   useEffect(() => {
+    fetch(`${API}/api/settings`)
+      .then((r) => r.json())
+      .then(setSettings)
+      .catch(() => {});
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  async function saveSettings(patch: Record<string, string>) {
+    const r = await fetch(`${API}/api/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    setSettings(await r.json());
+  }
 
   function poll(id: string) {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -159,21 +183,41 @@ export default function Home() {
           <span className="text-2xl">🎬</span>
           <h1 className="text-lg font-semibold tracking-tight">Suno MV Studio</h1>
         </div>
-        <div className="flex rounded-lg bg-white/5 p-1 text-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex rounded-lg bg-white/5 p-1 text-sm">
+            <button
+              onClick={() => setMode("local")}
+              className={`px-3 py-1.5 rounded-md transition ${mode === "local" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
+            >
+              로컬 생성
+            </button>
+            <button
+              onClick={() => setMode("ai")}
+              className={`px-3 py-1.5 rounded-md transition ${mode === "ai" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
+            >
+              AI 편집 ✨
+            </button>
+          </div>
           <button
-            onClick={() => setMode("local")}
-            className={`px-3 py-1.5 rounded-md transition ${mode === "local" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
+            onClick={() => setShowSettings(true)}
+            title="API 키 설정"
+            className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 hover:bg-white/10"
           >
-            로컬 생성
-          </button>
-          <button
-            onClick={() => setMode("ai")}
-            className={`px-3 py-1.5 rounded-md transition ${mode === "ai" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
-          >
-            AI 편집 ✨
+            ⚙️ 설정
+            {settings && (settings.llm_key_set || settings.video_key_set) && (
+              <span className="ml-1 inline-block h-2 w-2 rounded-full bg-emerald-400 align-middle" />
+            )}
           </button>
         </div>
       </header>
+
+      {showSettings && (
+        <SettingsModal
+          settings={settings}
+          onClose={() => setShowSettings(false)}
+          onSave={saveSettings}
+        />
+      )}
 
       <main className="mx-auto max-w-6xl px-6 py-8 grid gap-8 lg:grid-cols-2">
         {/* 왼쪽: 로컬 폼 또는 AI 채팅 */}
@@ -390,5 +434,109 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-xs font-medium text-neutral-400">{label}</span>
       {children}
     </label>
+  );
+}
+
+function SettingsModal({
+  settings,
+  onClose,
+  onSave,
+}: {
+  settings: Settings | null;
+  onClose: () => void;
+  onSave: (patch: Record<string, string>) => Promise<void>;
+}) {
+  const [llmProvider, setLlmProvider] = useState(settings?.llm_provider ?? "claude");
+  const [llmModel, setLlmModel] = useState(settings?.llm_model ?? "claude-sonnet-4-6");
+  const [llmKey, setLlmKey] = useState("");
+  const [videoProvider, setVideoProvider] = useState(settings?.video_provider ?? "kaiber");
+  const [videoKey, setVideoKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    setSaved(false);
+    const patch: Record<string, string> = {
+      llm_provider: llmProvider,
+      llm_model: llmModel,
+      video_provider: videoProvider,
+    };
+    if (llmKey.trim()) patch.llm_api_key = llmKey.trim();
+    if (videoKey.trim()) patch.video_api_key = videoKey.trim();
+    await onSave(patch);
+    setLlmKey("");
+    setVideoKey("");
+    setSaving(false);
+    setSaved(true);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-lg space-y-5 rounded-2xl border border-white/10 bg-neutral-900 p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold">⚙️ API 키 설정 (BYOK)</h2>
+          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-200">✕</button>
+        </div>
+        <p className="text-xs text-neutral-400">
+          키는 이 백엔드의 로컬 파일에만 저장되며 화면엔 다시 표시되지 않습니다(설정 여부만 표시).
+          provider는 언제든 바꿔 쓸 수 있어요.
+        </p>
+
+        <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
+          <h3 className="text-sm font-medium">AI 편집 (LLM)</h3>
+          <Field label="Provider">
+            <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} className={inputCls}>
+              <option value="claude">Claude (Anthropic)</option>
+            </select>
+          </Field>
+          <Field label="모델">
+            <input value={llmModel} onChange={(e) => setLlmModel(e.target.value)} className={inputCls} />
+          </Field>
+          <Field label={`API 키 ${settings?.llm_key_set ? "(설정됨 ✓ — 바꿀 때만 입력)" : "(미설정)"}`}>
+            <input
+              type="password"
+              value={llmKey}
+              onChange={(e) => setLlmKey(e.target.value)}
+              placeholder="sk-ant-..."
+              className={inputCls}
+            />
+          </Field>
+        </div>
+
+        <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
+          <h3 className="text-sm font-medium">AI 영상 생성 (배경)</h3>
+          <Field label="Provider">
+            <select value={videoProvider} onChange={(e) => setVideoProvider(e.target.value)} className={inputCls}>
+              <option value="kaiber">Kaiber</option>
+              <option value="higgsfield">Higgsfield</option>
+            </select>
+          </Field>
+          <Field label={`API 키 ${settings?.video_key_set ? "(설정됨 ✓)" : "(미설정)"}`}>
+            <input
+              type="password"
+              value={videoKey}
+              onChange={(e) => setVideoKey(e.target.value)}
+              placeholder="키 입력"
+              className={inputCls}
+            />
+          </Field>
+        </div>
+
+        <div className="flex items-center justify-end gap-3">
+          {saved && <span className="text-sm text-emerald-400">저장됨 ✓</span>}
+          <button
+            onClick={save}
+            disabled={saving}
+            className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:opacity-50"
+          >
+            {saving ? "저장 중…" : "저장"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

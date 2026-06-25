@@ -16,6 +16,7 @@ from pydantic import BaseModel
 import agent
 import jobs
 import render
+import settings
 
 app = FastAPI(title="Suno MV Studio API")
 
@@ -58,6 +59,24 @@ def _do_render(jid, d, audio, lyrics, bg_paths, opts):
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+class SettingsBody(BaseModel):
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    video_provider: str | None = None
+    video_api_key: str | None = None
+
+
+@app.get("/api/settings")
+def get_settings():
+    return settings.get_public()
+
+
+@app.post("/api/settings")
+def post_settings(body: SettingsBody):
+    return settings.update(body.model_dump(exclude_none=True))
 
 
 @app.post("/api/render")
@@ -137,15 +156,24 @@ def agent_edit(body: AgentBody):
     if not assets:
         return JSONResponse({"error": "이 프로젝트에는 편집할 자산이 없습니다."}, status_code=400)
 
+    llm_key = settings.get_key("llm_api_key")
+    if not llm_key:
+        return JSONResponse(
+            {"error": "AI 편집 키가 없습니다. 우측 상단 ⚙️ 설정에서 Claude API 키를 입력하세요."},
+            status_code=400,
+        )
+
+    cfg = settings.get_raw()
     cur_opts = job.get("opts") or {}
     history = [{"role": m.role, "content": m.content} for m in body.history]
     try:
-        reply, patch = agent.edit_video(cur_opts, body.message, history)
+        reply, patch = agent.edit_video(
+            cur_opts, body.message, history,
+            provider_name=cfg["llm_provider"], model=cfg["llm_model"],
+            api_key=llm_key,
+        )
     except Exception as e:  # noqa: BLE001
-        msg = str(e)
-        if "api_key" in msg.lower() or "ANTHROPIC_API_KEY" in msg:
-            msg = "ANTHROPIC_API_KEY 가 설정되지 않았습니다. 백엔드 환경변수에 키를 넣고 재시작하세요."
-        return JSONResponse({"error": f"에이전트 오류: {msg}"}, status_code=500)
+        return JSONResponse({"error": f"에이전트 오류: {e}"}, status_code=500)
 
     new_opts = {**cur_opts, **patch}
     njid, nd = jobs.create_job()
