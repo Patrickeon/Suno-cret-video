@@ -20,6 +20,13 @@ __pycache__/
 venv/
 env/
 
+# 백엔드 런타임 데이터 (업로드/렌더 결과)
+backend/data/
+
+# 프론트엔드 (node_modules/빌드 산출물은 frontend/.gitignore 가 처리)
+# 환경변수
+.env.local
+
 # OS / 에디터
 .DS_Store
 Thumbs.db

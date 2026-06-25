@@ -1,0 +1,175 @@
+"""Suno MV Studio — FastAPI 백엔드.
+
+음원/가사/배경 업로드 -> make_mv.py 렌더 -> 비동기 잡 -> 비디오/썸네일 서빙.
+프론트(Next.js, :3000)에서 호출.
+"""
+import os
+import shutil
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Optional
+
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+
+import agent
+import jobs
+import render
+
+app = FastAPI(title="Suno MV Studio API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 렌더는 CPU 무거움 -> 동시 2개로 제한
+EXECUTOR = ThreadPoolExecutor(max_workers=2)
+
+
+def _save_upload(up: UploadFile, dest: str):
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(up.file, f)
+
+
+def _do_render(jid, d, audio, lyrics, bg_paths, opts):
+    jobs.update(jid, status="running", opts=opts)
+    try:
+        code, log, out = render.run_render(d, audio, lyrics, bg_paths, opts)
+        log = log[-2000:]  # 잡 응답이 비대해지지 않게 끝부분만 보관
+        thumb = os.path.splitext(out)[0] + "_thumb.jpg"
+        if code == 0 and os.path.exists(out):
+            jobs.update(jid, status="done", log=log,
+                        video=True, thumb=os.path.exists(thumb))
+        else:
+            jobs.update(jid, status="error", log=log,
+                        error="렌더 실패 (로그 확인)")
+    except Exception as e:  # noqa: BLE001
+        jobs.update(jid, status="error", error=str(e))
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
+
+
+@app.post("/api/render")
+async def create_render(
+    audio: UploadFile = File(...),
+    lyrics_file: Optional[UploadFile] = File(None),
+    bg: List[UploadFile] = File(default=[]),
+    lyrics_text: str = Form(""),
+    viz: str = Form("waves"),
+    shorts: bool = Form(False),
+    clip_start: str = Form(""),
+    clip_len: float = Form(30),
+    kenburns: bool = Form(True),
+    title: str = Form(""),
+    artist: str = Form(""),
+    watermark: str = Form(""),
+    align: str = Form("none"),
+):
+    jid, d = jobs.create_job()
+
+    audio_path = os.path.join(d, "audio_" + (audio.filename or "input.mp3"))
+    _save_upload(audio, audio_path)
+
+    lyrics_path = None
+    if lyrics_file is not None and lyrics_file.filename:
+        lyrics_path = os.path.join(d, lyrics_file.filename)
+        _save_upload(lyrics_file, lyrics_path)
+    elif lyrics_text.strip():
+        lyrics_path = os.path.join(d, "lyrics.txt")
+        with open(lyrics_path, "w", encoding="utf-8") as f:
+            f.write(lyrics_text)
+
+    bg_paths = []
+    for i, b in enumerate(bg or []):
+        if b is not None and b.filename:
+            p = os.path.join(d, f"bg{i}_{b.filename}")
+            _save_upload(b, p)
+            bg_paths.append(p)
+
+    opts = {
+        "viz": viz,
+        "shorts": shorts,
+        "clip_start": clip_start,
+        "clip_len": clip_len,
+        "kenburns": kenburns,
+        "title": title,
+        "artist": artist,
+        "watermark": watermark,
+        "align": align,
+    }
+
+    # 재렌더(AI 편집) 때 같은 자산을 재사용하도록 경로 보관
+    assets = {"audio": audio_path, "lyrics": lyrics_path, "bg": bg_paths}
+    jobs.update(jid, assets=assets)
+
+    EXECUTOR.submit(_do_render, jid, d, audio_path, lyrics_path, bg_paths, opts)
+    return {"job_id": jid, "status": "queued"}
+
+
+class AgentMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AgentBody(BaseModel):
+    job_id: str
+    message: str
+    history: list[AgentMessage] = []
+
+
+@app.post("/api/agent")
+def agent_edit(body: AgentBody):
+    job = jobs.get(body.job_id)
+    if not job:
+        return JSONResponse({"error": "프로젝트를 찾을 수 없습니다."}, status_code=404)
+    assets = job.get("assets")
+    if not assets:
+        return JSONResponse({"error": "이 프로젝트에는 편집할 자산이 없습니다."}, status_code=400)
+
+    cur_opts = job.get("opts") or {}
+    history = [{"role": m.role, "content": m.content} for m in body.history]
+    try:
+        reply, patch = agent.edit_video(cur_opts, body.message, history)
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "api_key" in msg.lower() or "ANTHROPIC_API_KEY" in msg:
+            msg = "ANTHROPIC_API_KEY 가 설정되지 않았습니다. 백엔드 환경변수에 키를 넣고 재시작하세요."
+        return JSONResponse({"error": f"에이전트 오류: {msg}"}, status_code=500)
+
+    new_opts = {**cur_opts, **patch}
+    njid, nd = jobs.create_job()
+    jobs.update(njid, assets=assets)
+    EXECUTOR.submit(_do_render, njid, nd, assets["audio"], assets["lyrics"],
+                    assets["bg"], new_opts)
+    return {"reply": reply, "job_id": njid, "options": new_opts, "patch": patch}
+
+
+@app.get("/api/jobs/{jid}")
+def job_status(jid: str):
+    j = jobs.get(jid)
+    if not j:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return j
+
+
+@app.get("/api/jobs/{jid}/video")
+def job_video(jid: str):
+    out = os.path.join(jobs.job_dir(jid), "out.mp4")
+    if not os.path.exists(out):
+        return JSONResponse({"error": "no video"}, status_code=404)
+    return FileResponse(out, media_type="video/mp4", filename="music-video.mp4")
+
+
+@app.get("/api/jobs/{jid}/thumb")
+def job_thumb(jid: str):
+    thumb = os.path.join(jobs.job_dir(jid), "out_thumb.jpg")
+    if not os.path.exists(thumb):
+        return JSONResponse({"error": "no thumbnail"}, status_code=404)
+    return FileResponse(thumb, media_type="image/jpeg", filename="thumbnail.jpg")
