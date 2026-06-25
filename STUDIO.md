@@ -72,10 +72,33 @@ python -m uvicorn main:app --port 8000   # 키를 읽은 채로 재시작
 키가 없으면 채팅에 안내 메시지가 뜨고, 로컬 생성은 키 없이도 동작한다.
 provider는 `agent.py`에서 교체 가능(Claude 기본).
 
+## 외부 AI 영상 연동 (Phase 4, 골격)
+
+AI가 생성한 영상 클립을 **배경 트랙**으로 깔고, 그 위에 비주얼라이저/자막을 얹는다.
+
+```
+프롬프트 → [AI 영상 provider] → clip.mp4 → make_mv --video-bg clip.mp4 → 최종 뮤직비디오
+```
+
+- `make_mv.py --video-bg <clip.mp4>` : 영상 배경 지원(루프+cover-crop). **구현·검증 완료**
+- `backend/render.py` : `opts["video_bg"]` 면 `--video-bg` 로 전달. **연결됨**
+- `backend/video_providers.py` : `VideoProvider` 추상화 + Kaiber/Higgsfield **스텁**
+  (submit→poll→download 패턴). 실제 API 키/엔드포인트를 받으면 `_submit`/`_poll` 만 채우면 동작.
+  - `KAIBER_API_KEY` / `HIGGSFIELD_API_KEY` 환경변수 사용.
+
+> 남은 작업: provider별 실제 엔드포인트 구현 → `/api/ai-video`(프롬프트→clip) 엔드포인트 →
+> UI에서 "AI 배경 생성" 버튼. provider는 `agent.py`처럼 교체 가능.
+
+## GCP 배포 (Phase 5, 골격)
+
+- `backend/Dockerfile` (ffmpeg + NanumGothic), `frontend/Dockerfile` (Next standalone)
+- `MV_FONT`(컨테이너 한글 폰트), `ALLOWED_ORIGINS`(CORS), `ANTHROPIC_API_KEY` 환경변수화
+- 배포 절차/주의사항(임시 FS·잡 스토어·Secret Manager 등): **[DEPLOY.md](DEPLOY.md)**
+
 ## 로드맵
 
 - [x] **1. 로컬 웹 MVP** — 업로드 → 생성 → 미리보기
 - [ ] 2. 프로젝트 저장 + 비동기 작업큐 + 자산 라이브러리
 - [x] **3. AI 편집 에이전트** — 자연어 → tool call → 옵션 수정 → 재렌더 *(키 넣으면 동작)*
-- [ ] 4. 외부 AI 영상(Kaiber/Higgsfield) 연동
-- [ ] 5. **GCP 배포** — Cloud Run(백엔드) + Storage(자산) + Tasks(렌더큐), 로그인/멀티유저
+- [~] **4. 외부 AI 영상(Kaiber/Higgsfield)** — 추상화·--video-bg 완료, provider 구현 남음
+- [~] **5. GCP 배포** — Dockerfile·가이드 완료(DEPLOY.md), 실제 배포·GCS 이전 남음

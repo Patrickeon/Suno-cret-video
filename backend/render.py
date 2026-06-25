@@ -14,7 +14,9 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
 
     if lyrics:
         cmd += ["--lyrics", lyrics]
-    if bg_list:
+    if opts.get("video_bg"):
+        cmd += ["--video-bg", opts["video_bg"]]
+    elif bg_list:
         cmd += ["--bg"] + bg_list
 
     cmd += ["--viz", opts.get("viz", "waves")]

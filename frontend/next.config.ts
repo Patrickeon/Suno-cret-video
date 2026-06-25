@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // 도커/Cloud Run 배포용 독립 실행 번들 (node server.js)
+  output: "standalone",
 };
 
 export default nextConfig;

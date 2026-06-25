@@ -1,0 +1,13 @@
+# 백엔드 이미지 빌드(루트 컨텍스트)에서 제외
+frontend/
+**/node_modules/
+**/.next/
+backend/data/
+**/__pycache__/
+*.pyc
+.git/
+*.mp4
+*.mkv
+*_thumb.jpg
+.venv/
+venv/

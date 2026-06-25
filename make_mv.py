@@ -31,9 +31,11 @@ import subprocess
 import sys
 
 FPS = 30
-# drawtext용 폰트 패밀리명 (fontconfig). 절대경로(콜론)는 filter 파싱이 까다로워 패밀리명 사용.
-DRAW_FONT = "Malgun Gothic"
-SUB_FONT = "Malgun Gothic"  # libass(자막) 용 폰트명
+# 폰트 패밀리명. 기본은 Windows의 Malgun Gothic, 컨테이너(Linux)에선 MV_FONT 로 교체
+# (예: 도커에서 NanumGothic). drawtext/libass 모두 fontconfig 패밀리명으로 해석.
+_DEFAULT_FONT = os.environ.get("MV_FONT", "Malgun Gothic")
+DRAW_FONT = _DEFAULT_FONT   # drawtext(워터마크/썸네일)용
+SUB_FONT = _DEFAULT_FONT    # libass(자막)용
 
 # ---------- ffmpeg helpers ----------
 
@@ -192,13 +194,24 @@ def write_ass(cues, path, lay, font=SUB_FONT):
 
 # ---------- 필터 빌더 ----------
 
-def build_bg(bg_list, lay, duration, kenburns, bg_color):
+def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None):
     """
     배경 비디오 체인 빌드.
     반환: (extra_inputs, filter_parts, bg_label, audio_idx)
-      extra_inputs: 배경 이미지용 -i 인자 리스트(앞쪽). audio_idx = 배경 입력 개수.
+      extra_inputs: 배경 입력 -i 인자 리스트(앞쪽). audio_idx = 배경 입력 개수.
+    우선순위: video_bg(영상) > bg_list(이미지) > 단색.
     """
     W, H = lay["W"], lay["H"]
+
+    # 영상 배경 (AI 생성 클립 등): 무한 루프로 곡 길이를 덮고 W×H 로 cover-crop
+    if video_bg:
+        inputs = ["-stream_loop", "-1", "-i", os.path.abspath(video_bg)]
+        parts = [
+            f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
+            f"crop={W}:{H},setsar=1,fps={FPS}[bg]"
+        ]
+        return inputs, parts, "[bg]", 1
+
     if not bg_list:
         return [], [f"color=c={bg_color}:s={W}x{H}:r={FPS}[bg]"], "[bg]", 0
 
@@ -280,13 +293,13 @@ def write_textfile(text, path):
 def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            bg_color="0x0a0a14", duration=None, kenburns=True,
            clip_start=None, clip_len=None, watermark=None, logo=None,
-           crf=20):
+           video_bg=None, crf=20):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
 
     extra_inputs, bg_parts, bg_label, audio_idx = build_bg(
-        bg_list, lay, duration, kenburns, bg_color)
+        bg_list, lay, duration, kenburns, bg_color, video_bg=video_bg)
     audio_spec = f"{audio_idx}:a"
 
     viz_parts, viz_label = build_viz(audio_spec, lay, viz)
@@ -388,6 +401,7 @@ def main():
     ap.add_argument("--audio", required=True, help="음원 (mp3/wav/flac)")
     ap.add_argument("--lyrics", help="가사 (.txt 또는 .lrc)")
     ap.add_argument("--bg", nargs="+", help="배경 이미지 (여러 장 가능)")
+    ap.add_argument("--video-bg", help="배경 영상 (AI 생성 클립 등, 이미지보다 우선)")
     ap.add_argument("--out", default="mv.mp4", help="출력 mp4")
     ap.add_argument("--viz", default="waves",
                     choices=["waves", "cqt", "spectrum", "none"])
@@ -465,7 +479,8 @@ def main():
            bg_list=args.bg, viz=args.viz, bg_color=args.bg_color,
            duration=render_dur, kenburns=args.kenburns,
            clip_start=clip_start, clip_len=clip_len,
-           watermark=args.watermark, logo=args.logo)
+           watermark=args.watermark, logo=args.logo,
+           video_bg=args.video_bg)
 
     # 썸네일
     if args.title:
