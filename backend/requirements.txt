@@ -2,3 +2,4 @@ fastapi
 uvicorn[standard]
 python-multipart
 anthropic>=0.40
+google-cloud-storage  # GCS_BUCKET 설정 시에만 사용(지연 import)

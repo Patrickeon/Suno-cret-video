@@ -4,21 +4,34 @@
 프론트(Next.js, :3000)에서 호출.
 """
 import os
-import shutil
+from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import agent
 import jobs
 import render
 import settings
+import storage
 
-app = FastAPI(title="Suno MV Studio API")
+STORAGE = storage.get_storage()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    jobs.load_all()
+    removed = jobs.cleanup()
+    if removed:
+        print(f"[startup] 오래된 잡 {removed}개 정리")
+    yield
+
+
+app = FastAPI(title="Suno MV Studio API", lifespan=lifespan)
 
 # 허용 출처: 기본은 로컬, 배포 시 ALLOWED_ORIGINS(쉼표구분)로 프론트 URL 지정
 _origins = os.environ.get(
@@ -70,23 +83,20 @@ def _save_upload(up: UploadFile, dest: str, max_mb: int):
             f.write(chunk)
 
 
-@app.on_event("startup")
-def _startup():
-    jobs.load_all()
-    removed = jobs.cleanup()
-    if removed:
-        print(f"[startup] 오래된 잡 {removed}개 정리")
-
-
 def _do_render(jid, d, audio, lyrics, bg_paths, opts):
     jobs.update(jid, status="running", opts=opts)
     try:
         code, log, out = render.run_render(d, audio, lyrics, bg_paths, opts)
         log = log[-2000:]  # 잡 응답이 비대해지지 않게 끝부분만 보관
         thumb = os.path.splitext(out)[0] + "_thumb.jpg"
+        has_thumb = os.path.exists(thumb)
         if code == 0 and os.path.exists(out):
-            jobs.update(jid, status="done", log=log,
-                        video=True, thumb=os.path.exists(thumb))
+            names = ["out.mp4"] + (["out_thumb.jpg"] if has_thumb else [])
+            try:
+                STORAGE.save_outputs(jid, d, names)
+            except Exception as e:  # noqa: BLE001
+                print(f"[storage] 업로드 실패(jid={jid}): {e}")
+            jobs.update(jid, status="done", log=log, video=True, thumb=has_thumb)
         else:
             jobs.update(jid, status="error", log=log,
                         error="렌더 실패 (로그 확인)")
@@ -95,6 +105,7 @@ def _do_render(jid, d, audio, lyrics, bg_paths, opts):
 
 
 @app.get("/api/health")
+@app.get("/healthz")
 def health():
     return {"ok": True}
 
@@ -253,15 +264,9 @@ def job_status(jid: str):
 
 @app.get("/api/jobs/{jid}/video")
 def job_video(jid: str):
-    out = os.path.join(jobs.job_dir(jid), "out.mp4")
-    if not os.path.exists(out):
-        return JSONResponse({"error": "no video"}, status_code=404)
-    return FileResponse(out, media_type="video/mp4", filename="music-video.mp4")
+    return STORAGE.serve(jid, jobs.job_dir(jid), "out.mp4", "music-video.mp4")
 
 
 @app.get("/api/jobs/{jid}/thumb")
 def job_thumb(jid: str):
-    thumb = os.path.join(jobs.job_dir(jid), "out_thumb.jpg")
-    if not os.path.exists(thumb):
-        return JSONResponse({"error": "no thumbnail"}, status_code=404)
-    return FileResponse(thumb, media_type="image/jpeg", filename="thumbnail.jpg")
+    return STORAGE.serve(jid, jobs.job_dir(jid), "out_thumb.jpg", "thumbnail.jpg")

@@ -17,6 +17,25 @@ docker compose up --build
 
 이게 정상 동작하면 같은 이미지가 Cloud Run 에서도 동작한다.
 
+## 원클릭 배포 (스크립트)
+
+백엔드→URL확보→프론트(백엔드 URL 주입)→CORS 좁히기까지 자동:
+
+```powershell
+# Windows
+$env:ANTHROPIC_API_KEY="sk-ant-..."   # (선택)
+$env:GCS_BUCKET="my-bucket"           # (선택) 결과물 영속화
+./deploy.ps1 -Project my-gcp-project
+```
+```bash
+# macOS/Linux
+export ANTHROPIC_API_KEY=sk-ant-...   # (선택)
+export GCS_BUCKET=my-bucket           # (선택)
+PROJECT=my-gcp-project ./deploy.sh
+```
+
+> `gcloud` + Docker 가 있는 환경에서 실행. (이 저장소의 Docker 이미지 빌드는 검증 완료)
+
 ## CI 빌드 (Cloud Build)
 
 이미지 빌드+푸시는 `cloudbuild.yaml` 로:
@@ -85,11 +104,11 @@ gcloud run deploy suno-frontend \
 
 ## ⚠️ 운영 시 반드시 고려할 것 (현재 골격의 한계)
 
-1. **파일시스템이 임시(ephemeral)** — Cloud Run 인스턴스의 디스크는 재시작 시 사라지고,
-   인스턴스가 여러 개면 잡이 공유되지 않는다.
-   - 임시 해결: `--min-instances 1 --max-instances 1` 로 단일 인스턴스 운영.
-   - 제대로: **잡/결과를 Cloud Storage(GCS)** 에 저장하도록 `jobs.py`/서빙 경로 교체.
-2. **인메모리 잡 스토어** — 위와 같은 이유로 재시작 시 잡 정보 소실 → DB(Firestore 등)나 GCS 메타로 이전.
+1. **결과물(out.mp4/썸네일) 영속성** — Cloud Run 디스크는 임시.
+   - **해결됨(선택)**: `GCS_BUCKET` 환경변수를 주면 `storage.py` 가 결과를 GCS 에 저장·스트리밍.
+2. **잡 메타데이터** — `jobs.py` 가 디스크(job.json)에 저장하나 인스턴스 간 공유는 안 됨.
+   - 단일 인스턴스(`--max-instances 1`, 배포 스크립트 기본값)면 OK.
+   - 멀티 인스턴스로 키우려면 메타를 **Firestore/GCS** 로 이전 (`jobs.py` 가 교체 지점).
 3. **렌더는 동기 백그라운드 스레드** — 부하가 커지면 **Cloud Tasks + 별도 워커**로 분리 권장.
 4. **API 키 보안** — `ANTHROPIC_API_KEY` 등은 **Secret Manager** 사용 권장
    (`--set-secrets ANTHROPIC_API_KEY=anthropic-key:latest`).
