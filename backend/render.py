@@ -48,8 +48,12 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--res", str(opts["res"])]
     if int(opts.get("fps", 30) or 30) != 30:
         cmd += ["--fps", str(int(opts["fps"]))]
-    if opts.get("normalize"):
+    if opts.get("master"):
+        cmd += ["--master"]
+    elif opts.get("normalize"):
         cmd += ["--normalize"]
+    if opts.get("karaoke"):
+        cmd += ["--karaoke"]
     if opts.get("fade_in"):
         cmd += ["--fade-in", str(opts["fade_in"])]
     if opts.get("fade_out"):

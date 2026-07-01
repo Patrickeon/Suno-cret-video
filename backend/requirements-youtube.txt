@@ -1,0 +1,5 @@
+# YouTube 직접 업로드(선택 기능) 전용 의존성.  pip install -r requirements-youtube.txt
+# 설정법은 yt_upload.py 상단 주석 참고.
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2

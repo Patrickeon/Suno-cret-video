@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { API, inputCls } from "../lib/studio";
 
 interface Chapter { time: string; label: string; }
@@ -26,6 +26,20 @@ export function PublishPanel({
   const [metaBusy, setMetaBusy] = useState(false);
   const [count, setCount] = useState(3);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [batchIds, setBatchIds] = useState<string[]>([]);
+
+  // YouTube 업로드
+  const [ytReady, setYtReady] = useState(false);
+  const [ytPrivacy, setYtPrivacy] = useState("private");
+  const [ytBusy, setYtBusy] = useState(false);
+  const [ytUrl, setYtUrl] = useState("");
+
+  useEffect(() => {
+    fetch(`${API}/api/youtube/status`)
+      .then((r) => r.json())
+      .then((d) => setYtReady(!!d.token))
+      .catch(() => {});
+  }, []);
 
   async function genMeta() {
     setMetaBusy(true);
@@ -56,12 +70,40 @@ export function PublishPanel({
       });
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || `오류 (${r.status})`);
+      setBatchIds([data.longform, ...(data.shorts || [])].filter(Boolean));
       onToast(`롱폼 1 + 쇼츠 ${data.detected}개 렌더 시작! '최근 작업'에서 확인하세요.`, "success");
       onRefresh();
     } catch (e) {
       onToast(e instanceof Error ? e.message : "배치 실패", "error");
     } finally {
       setBatchBusy(false);
+    }
+  }
+
+  async function uploadYouTube() {
+    setYtBusy(true);
+    setYtUrl("");
+    try {
+      const r = await fetch(`${API}/api/youtube/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          job_id: jobId,
+          title: meta?.title || "뮤직비디오",
+          description: (meta?.description || "") +
+            (meta?.tags?.length ? "\n\n" + meta.tags.map((t) => `#${t}`).join(" ") : ""),
+          tags: meta?.tags || [],
+          privacy: ytPrivacy,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || `오류 (${r.status})`);
+      setYtUrl(data.url);
+      onToast("업로드 완료!", "success");
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : "업로드 실패", "error");
+    } finally {
+      setYtBusy(false);
     }
   }
 
@@ -138,6 +180,45 @@ export function PublishPanel({
             {batchBusy ? "시작 중…" : "🎬 롱폼+쇼츠 생성"}
           </button>
         </div>
+        {batchIds.length > 0 && (
+          <a
+            href={`${API}/api/jobs/zip?ids=${batchIds.join(",")}`}
+            className="inline-block rounded-lg bg-white/10 px-3 py-2 text-xs text-neutral-200 hover:bg-white/20"
+          >
+            📦 완료분 전체 ZIP 다운로드
+          </a>
+        )}
+      </div>
+
+      {/* YouTube 업로드 */}
+      <div className="space-y-2 border-t border-white/10 pt-3">
+        <span className="text-xs font-medium text-neutral-400">YouTube 업로드</span>
+        {!ytReady ? (
+          <p className="text-[11px] text-neutral-500">
+            연결되지 않았습니다. <code className="text-neutral-400">backend/yt_upload.py</code> 안내대로
+            OAuth 설정 후 <code className="text-neutral-400">python -m yt_upload</code> 로 1회 인증하면 활성화됩니다.
+          </p>
+        ) : (
+          <div className="flex items-center gap-2">
+            <select value={ytPrivacy} onChange={(e) => setYtPrivacy(e.target.value)} className={`${inputCls} w-32`}>
+              <option value="private">비공개</option>
+              <option value="unlisted">미등록</option>
+              <option value="public">공개</option>
+            </select>
+            <button
+              onClick={uploadYouTube}
+              disabled={ytBusy}
+              className="ml-auto rounded-lg bg-red-500 px-3 py-2 text-xs font-medium text-white hover:bg-red-400 disabled:opacity-50"
+            >
+              {ytBusy ? "업로드 중…" : "▶ 유튜브 업로드"}
+            </button>
+          </div>
+        )}
+        {ytUrl && (
+          <a href={ytUrl} target="_blank" rel="noreferrer" className="block text-xs text-indigo-300 hover:underline">
+            {ytUrl}
+          </a>
+        )}
       </div>
     </div>
   );

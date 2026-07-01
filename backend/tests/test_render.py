@@ -87,6 +87,18 @@ def test_subtitle_style_options():
     assert cmd[cmd.index("--sub-pos") + 1] == "top"
 
 
+def test_master_precedence_over_normalize():
+    cmd = _build({"master": True, "normalize": True, "karaoke": True})
+    assert "--master" in cmd
+    assert "--normalize" not in cmd  # master 우선
+    assert "--karaoke" in cmd
+
+
+def test_normalize_when_no_master():
+    cmd = _build({"normalize": True})
+    assert "--normalize" in cmd and "--master" not in cmd
+
+
 def test_subtitle_defaults_omitted():
     cmd = _build({"sub_color": "FFFFFF", "sub_size": 1.0, "sub_pos": "bottom"})
     assert "--sub-color" not in cmd

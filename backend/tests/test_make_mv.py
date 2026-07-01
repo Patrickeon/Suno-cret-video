@@ -68,3 +68,25 @@ def test_parse_time_invalid_raises():
     import pytest
     with pytest.raises(ValueError):
         mv.parse_time("abc")
+
+
+def test_karaoke_text_distributes_duration():
+    t = mv.karaoke_text("abcd", 2.0)  # 2초 / 4글자 -> 글자당 50cs
+    assert t.count("\\kf") == 4
+    assert "{\\kf50}a" in t
+
+
+def test_loudnorm_filter_single_pass():
+    assert mv.loudnorm_filter("x.mp3", two_pass=False) == "loudnorm=I=-14:TP=-1.5:LRA=11"
+
+
+def test_loudnorm_filter_twopass_fallback_on_bad_input():
+    # 측정 실패(없는 파일) 시 단일 패스 문자열로 폴백
+    assert mv.loudnorm_filter("nonexistent.wav", two_pass=True) == "loudnorm=I=-14:TP=-1.5:LRA=11"
+
+
+def test_read_txt_strips_bom(tmp_path):
+    p = tmp_path / "l.txt"
+    p.write_bytes("﻿첫줄\n둘째\n".encode("utf-8"))
+    lines = mv.read_txt_lines(str(p))
+    assert lines[0] == "첫줄"  # BOM 제거됨

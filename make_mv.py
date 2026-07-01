@@ -73,6 +73,40 @@ def probe_duration(audio):
     ])
     return float(json.loads(out)["format"]["duration"])
 
+def measure_loudnorm(audio, target_i=-14.0, tp=-1.5, lra=11.0):
+    """1차 패스로 라우드니스를 측정해 2-pass loudnorm 파라미터를 얻는다.
+    실패 시 None (그러면 single-pass 로 폴백)."""
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", audio, "-af",
+         f"loudnorm=I={target_i}:TP={tp}:LRA={lra}:print_format=json",
+         "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    txt = proc.stderr or ""
+    s, e = txt.rfind("{"), txt.rfind("}")
+    if s < 0 or e <= s:
+        return None
+    try:
+        return json.loads(txt[s:e + 1])
+    except ValueError:
+        return None
+
+def loudnorm_filter(audio, two_pass, target_i=-14.0, tp=-1.5, lra=11.0):
+    """loudnorm 필터 문자열. two_pass 면 측정값을 넣어 정밀 정규화(linear)."""
+    base = f"loudnorm=I={target_i:g}:TP={tp:g}:LRA={lra:g}"
+    if not two_pass:
+        return base
+    m = measure_loudnorm(audio, target_i, tp, lra)
+    if not m:
+        return base
+    try:
+        return (base +
+                f":measured_I={m['input_i']}:measured_TP={m['input_tp']}"
+                f":measured_LRA={m['input_lra']}:measured_thresh={m['input_thresh']}"
+                f":offset={m['target_offset']}:linear=true")
+    except KeyError:
+        return base
+
 def parse_time(s):
     """'1:05' 또는 '65' 또는 '1:05.5' -> 초(float)"""
     s = str(s).strip()
@@ -110,7 +144,7 @@ LRC_RE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\](.*)")
 
 def parse_lrc(path):
     items = []
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:
         for line in f:
             m = LRC_RE.match(line.strip())
             if not m:
@@ -123,7 +157,7 @@ def parse_lrc(path):
     return items
 
 def read_txt_lines(path):
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:
         return [ln.strip() for ln in f if ln.strip()]
 
 def even_distribute(lines, duration, intro=0.0, outro=0.0):
@@ -202,7 +236,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Lyric,{font},{fontsize},{primary},&H000088FF,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,4,2,{align},{mlr},{mlr},{marginv},1
+Style: Lyric,{font},{fontsize},{primary},{secondary},&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,4,2,{align},{mlr},{mlr},{marginv},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -220,8 +254,20 @@ def hex_to_ass(color):
     return f"&H00{c[4:6]}{c[2:4]}{c[0:2]}".upper()
 
 
+def karaoke_text(text, dur):
+    """줄 지속시간(dur초)을 글자 수로 균등 분배해 \\kf 색채움 태그를 붙인다."""
+    chars = list(text)
+    n = len(chars) or 1
+    per = max(1, int(round(dur * 100)) // n)  # 글자당 centiseconds
+    out = []
+    for c in chars:
+        esc = c.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
+        out.append(f"{{\\kf{per}}}{esc}")
+    return "".join(out)
+
+
 def write_ass(cues, path, lay, font=SUB_FONT, color="FFFFFF", size_mult=1.0,
-              pos="bottom"):
+              pos="bottom", karaoke=False):
     fontsize = max(1, int(round(lay["font_size"] * float(size_mult))))
     align = {"bottom": 2, "middle": 5, "top": 8}.get(pos, 2)
     if pos == "top":
@@ -230,18 +276,21 @@ def write_ass(cues, path, lay, font=SUB_FONT, color="FFFFFF", size_mult=1.0,
         marginv = 10  # 세로 중앙 정렬은 MarginV 영향 작음
     else:
         marginv = lay["margin_v"]
+    # 카라오케: 아직 안 부른 글자는 어둡게(Secondary), 부른 글자는 색(Primary)
+    secondary = "&H00555555" if karaoke else "&H000088FF"
     with open(path, "w", encoding="utf-8") as f:
         f.write(ASS_HEADER.format(
             W=lay["W"], H=lay["H"], font=font, fontsize=fontsize,
             mlr=lay["margin_lr"], marginv=marginv,
-            primary=hex_to_ass(color), align=align,
+            primary=hex_to_ass(color), secondary=secondary, align=align,
         ))
         for start, end, text in cues:
             if end <= start:
                 end = start + 0.5
+            body = karaoke_text(text, end - start) if karaoke else ass_escape(text)
             f.write(
                 f"Dialogue: 0,{fmt_ass_time(start)},{fmt_ass_time(end)},"
-                f"Lyric,,0,0,0,,{ass_escape(text)}\n"
+                f"Lyric,,0,0,0,,{body}\n"
             )
 
 # ---------- 필터 빌더 ----------
@@ -351,7 +400,7 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            bg_color="0x0a0a14", duration=None, kenburns=True,
            clip_start=None, clip_len=None, watermark=None, logo=None,
            video_bg=None, crf=20, scale=1.0,
-           normalize=False, fade_in=0.0, fade_out=0.0,
+           normalize=False, master=False, fade_in=0.0, fade_out=0.0,
            vignette=False, grain=False):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
@@ -366,8 +415,12 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     # ---- 오디오 필터 체인 (loudnorm / 페이드) ----
     # 유튜브 기준 -14 LUFS 정규화 + 인트로/아웃트로 페이드.
     afilters = []
-    if normalize:
-        afilters.append("loudnorm=I=-14:TP=-1.5:LRA=11")
+    if master:
+        # 2-pass loudnorm(정밀 -14 LUFS) + 리미터(클리핑 방지)
+        afilters.append(loudnorm_filter(audio, two_pass=True))
+        afilters.append("alimiter=limit=0.97")
+    elif normalize:
+        afilters.append(loudnorm_filter(audio, two_pass=False))
     if fade_in and fade_in > 0:
         afilters.append(f"afade=t=in:st=0:d={fade_in:.3f}")
     if fade_out and fade_out > 0 and duration:
@@ -543,7 +596,11 @@ def main():
     ap.add_argument("--fps", type=int, default=30, choices=[24, 30, 60],
                     help="프레임레이트 (60 이면 비주얼라이저가 부드러움)")
     ap.add_argument("--normalize", action="store_true",
-                    help="유튜브 기준 -14 LUFS 라우드니스 정규화")
+                    help="유튜브 기준 -14 LUFS 라우드니스 정규화(1-pass)")
+    ap.add_argument("--master", action="store_true",
+                    help="정밀 마스터링: 2-pass loudnorm + 리미터(클리핑 방지)")
+    ap.add_argument("--karaoke", action="store_true",
+                    help="가사 카라오케 색채움(줄 지속시간을 글자에 분배)")
     ap.add_argument("--fade-in", type=float, default=0.0, help="인트로 페이드(초, 영상+오디오)")
     ap.add_argument("--fade-out", type=float, default=0.0, help="아웃트로 페이드(초, 영상+오디오)")
     ap.add_argument("--vignette", action="store_true", help="비네트(가장자리 어둡게)")
@@ -604,7 +661,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     ass_path = os.path.join(out_dir, "_sub.ass")
     write_ass(cues, ass_path, lay, font=args.font, color=args.sub_color,
-              size_mult=args.sub_size, pos=args.sub_pos)
+              size_mult=args.sub_size, pos=args.sub_pos, karaoke=args.karaoke)
 
     render(args.audio, ass_path, args.out, lay,
            bg_list=args.bg, viz=args.viz, bg_color=args.bg_color,
@@ -612,7 +669,8 @@ def main():
            clip_start=clip_start, clip_len=clip_len,
            watermark=args.watermark, logo=args.logo,
            video_bg=args.video_bg, scale=scale,
-           normalize=args.normalize, fade_in=args.fade_in, fade_out=args.fade_out,
+           normalize=args.normalize, master=args.master,
+           fade_in=args.fade_in, fade_out=args.fade_out,
            vignette=args.vignette, grain=args.film_grain)
 
     # 썸네일

@@ -4,14 +4,17 @@
 프론트(Next.js, :3000)에서 호출.
 """
 import os
+import tempfile
+import zipfile
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 import agent
 import highlights
@@ -20,6 +23,7 @@ import render
 import settings
 import storage
 import video_providers
+import yt_upload
 
 STORAGE = storage.get_storage()
 
@@ -195,6 +199,8 @@ async def create_render(
     res: str = Form("1080"),
     fps: int = Form(30),
     normalize: bool = Form(False),
+    master: bool = Form(False),
+    karaoke: bool = Form(False),
     fade_in: float = Form(0.0),
     fade_out: float = Form(0.0),
     vignette: bool = Form(False),
@@ -260,6 +266,8 @@ async def create_render(
         "res": res,
         "fps": fps,
         "normalize": normalize,
+        "master": master,
+        "karaoke": karaoke,
         "fade_in": fade_in,
         "fade_out": fade_out,
         "vignette": vignette,
@@ -457,6 +465,59 @@ def batch(body: BatchBody):
 
     return {"longform": lf_jid, "shorts": short_jids,
             "detected": len(short_jids)}
+
+
+@app.get("/api/youtube/status")
+def youtube_status():
+    return yt_upload.auth_status()
+
+
+class YouTubeBody(BaseModel):
+    job_id: str
+    title: str
+    description: str = ""
+    tags: list[str] = []
+    privacy: str = "private"  # private | unlisted | public
+
+
+@app.post("/api/youtube/upload")
+def youtube_upload(body: YouTubeBody):
+    j = jobs.get(body.job_id)
+    if not j or j.get("status") != "done":
+        return JSONResponse({"error": "완료된 영상만 업로드할 수 있습니다."}, status_code=400)
+    p = os.path.join(jobs.job_dir(body.job_id), "out.mp4")
+    if not os.path.exists(p):
+        return JSONResponse({"error": "영상 파일을 찾을 수 없습니다."}, status_code=404)
+    try:
+        res = yt_upload.upload(p, body.title, body.description, body.tags, body.privacy)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return res
+
+
+@app.get("/api/jobs/zip")
+def jobs_zip(ids: str):
+    """여러 잡의 완료 영상을 한 zip 으로 묶어 다운로드 (로컬 스토리지 기준)."""
+    files = []
+    for jid in [x for x in ids.split(",") if x]:
+        j = jobs.get(jid)
+        if not j or j.get("status") != "done":
+            continue
+        p = os.path.join(jobs.job_dir(jid), "out.mp4")
+        if os.path.exists(p):
+            safe = (j.get("title") or jid).replace("/", "_").replace("\\", "_")
+            files.append((p, f"{safe}_{jid}.mp4"))
+    if not files:
+        return JSONResponse({"error": "다운로드할 완료된 영상이 없습니다."}, status_code=400)
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
+        for path, arc in files:
+            z.write(path, arc)
+    tmp.close()
+    return FileResponse(
+        tmp.name, media_type="application/zip", filename="music-videos.zip",
+        background=BackgroundTask(lambda: os.path.exists(tmp.name) and os.remove(tmp.name)),
+    )
 
 
 @app.get("/api/jobs")

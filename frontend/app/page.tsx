@@ -49,6 +49,8 @@ export default function Home() {
   const [res, setRes] = useState("1080");
   const [fps, setFps] = useState(30);
   const [normalize, setNormalize] = useState(true);
+  const [master, setMaster] = useState(false);
+  const [karaoke, setKaraoke] = useState(false);
   const [fadeIn, setFadeIn] = useState(0);
   const [fadeOut, setFadeOut] = useState(0);
   const [vignette, setVignette] = useState(false);
@@ -75,6 +77,16 @@ export default function Home() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // 프로젝트 프리셋 (스타일/품질 조합, localStorage)
+  const [presets, setPresets] = useState<Record<string, Record<string, unknown>>>({});
+  useEffect(() => {
+    try {
+      setPresets(JSON.parse(localStorage.getItem("mv_presets") || "{}"));
+    } catch {
+      /* 무시 */
+    }
+  }, []);
 
   // 사전 스크립트가 적용한 테마를 상태에 동기화 (마운트 시 1회)
   useEffect(() => {
@@ -129,6 +141,61 @@ export default function Home() {
     toast("설정이 저장되었습니다.", "success");
   }
 
+  function persistPresets(p: Record<string, Record<string, unknown>>) {
+    setPresets(p);
+    try {
+      localStorage.setItem("mv_presets", JSON.stringify(p));
+    } catch {
+      /* 무시 */
+    }
+  }
+
+  function savePreset() {
+    const name = window.prompt("프리셋 이름을 입력하세요")?.trim();
+    if (!name) return;
+    const snap = {
+      viz, shorts, kenburns, bgColor, watermark, align, res, fps,
+      normalize, master, karaoke, fadeIn, fadeOut, vignette, filmGrain,
+      subColor, subSize, subPos, clipLen,
+    };
+    persistPresets({ ...presets, [name]: snap });
+    toast(`프리셋 '${name}' 저장됨`, "success");
+  }
+
+  function applyPreset(name: string) {
+    const s = presets[name];
+    if (!s) return;
+    const b = (k: string, d: boolean) => (typeof s[k] === "boolean" ? (s[k] as boolean) : d);
+    const str = (k: string, d: string) => (typeof s[k] === "string" ? (s[k] as string) : d);
+    const num = (k: string, d: number) => (typeof s[k] === "number" ? (s[k] as number) : d);
+    setViz(str("viz", "waves"));
+    setShorts(b("shorts", false));
+    setKenburns(b("kenburns", true));
+    setBgColor(str("bgColor", "0x0a0a14"));
+    setWatermark(str("watermark", ""));
+    setAlign(b("align", false));
+    setRes(str("res", "1080"));
+    setFps(num("fps", 30));
+    setNormalize(b("normalize", true));
+    setMaster(b("master", false));
+    setKaraoke(b("karaoke", false));
+    setFadeIn(num("fadeIn", 0));
+    setFadeOut(num("fadeOut", 0));
+    setVignette(b("vignette", false));
+    setFilmGrain(b("filmGrain", false));
+    setSubColor(str("subColor", "FFFFFF"));
+    setSubSize(num("subSize", 1));
+    setSubPos(str("subPos", "bottom"));
+    setClipLen(num("clipLen", 30));
+    toast(`'${name}' 프리셋 적용`, "info");
+  }
+
+  function deletePreset(name: string) {
+    const rest = { ...presets };
+    delete rest[name];
+    persistPresets(rest);
+  }
+
   function poll(id: string) {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
@@ -175,6 +242,8 @@ export default function Home() {
       fd.append("res", res);
       fd.append("fps", String(fps));
       fd.append("normalize", String(normalize));
+      fd.append("master", String(master));
+      fd.append("karaoke", String(karaoke));
       fd.append("fade_in", String(fadeIn));
       fd.append("fade_out", String(fadeOut));
       fd.append("vignette", String(vignette));
@@ -370,6 +439,22 @@ export default function Home() {
         <section className="space-y-6">
           {mode === "local" ? (
             <>
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-3">
+                <span className="text-xs font-medium text-neutral-400">프리셋</span>
+                {Object.keys(presets).length === 0 && (
+                  <span className="text-[11px] text-neutral-500">저장된 프리셋 없음</span>
+                )}
+                {Object.keys(presets).map((n) => (
+                  <span key={n} className="flex items-center gap-1 rounded-full bg-white/5 px-2 py-1 text-xs ring-1 ring-white/10">
+                    <button onClick={() => applyPreset(n)} className="hover:text-white">{n}</button>
+                    <button onClick={() => deletePreset(n)} title="삭제" className="text-neutral-500 hover:text-red-400">✕</button>
+                  </span>
+                ))}
+                <button onClick={savePreset} className="ml-auto rounded-lg bg-white/10 px-3 py-1 text-xs text-neutral-200 hover:bg-white/20">
+                  ＋ 현재 설정 저장
+                </button>
+              </div>
+
               <Card title="1. 음원 / 가사" step="①">
                 <Dropzone
                   label="음원 파일"
@@ -398,6 +483,7 @@ export default function Home() {
                   onFiles={(fs) => setLyricsFile(fs[0] ?? null)}
                 />
                 <Toggle checked={align} onChange={setAlign} label="AI 자동 가사 정렬 (백엔드 stable-ts 필요)" />
+                <Toggle checked={karaoke} onChange={setKaraoke} label="🎤 카라오케 색채움 (글자 스윕)" />
                 <div className="grid grid-cols-3 gap-3">
                   <Field label="자막 색">
                     <input
@@ -520,6 +606,8 @@ export default function Home() {
                   1440p 이상으로 올리면 유튜브가 더 좋은 코덱(VP9)을 적용해 선명해집니다.
                 </p>
                 <Toggle checked={normalize} onChange={setNormalize} label="라우드니스 정규화 (-14 LUFS, 유튜브 표준)" />
+                <Toggle checked={master} onChange={setMaster} label="🎚 정밀 마스터링 (2-pass + 리미터, 느리지만 정확)" />
+                {master && <p className="text-[11px] text-neutral-500">측정 패스가 추가돼 렌더가 조금 더 걸립니다.</p>}
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="페이드 인 (초)">
                     <input type="number" min={0} step={0.5} value={fadeIn} onChange={(e) => setFadeIn(Number(e.target.value))} className={inputCls} />
