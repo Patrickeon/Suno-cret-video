@@ -85,6 +85,17 @@ def test_loudnorm_filter_twopass_fallback_on_bad_input():
     assert mv.loudnorm_filter("nonexistent.wav", two_pass=True) == "loudnorm=I=-14:TP=-1.5:LRA=11"
 
 
+def test_draw_font_spec_quotes_fontfile():
+    spec = mv.draw_font_spec()
+    if mv.DRAW_FONTFILE:
+        # 콜론 포함 경로는 작은따옴표+이스케이프로 감싸야 filtergraph 파싱됨
+        assert spec.startswith("fontfile='") and spec.endswith("'")
+        if ":" in mv.DRAW_FONTFILE:
+            assert "\\:" in spec
+    else:
+        assert spec.startswith("font=")
+
+
 def test_read_txt_strips_bom(tmp_path):
     p = tmp_path / "l.txt"
     p.write_bytes("﻿첫줄\n둘째\n".encode("utf-8"))

@@ -37,6 +37,34 @@ _DEFAULT_FONT = os.environ.get("MV_FONT", "Malgun Gothic")
 DRAW_FONT = _DEFAULT_FONT   # drawtext(워터마크/썸네일)용
 SUB_FONT = _DEFAULT_FONT    # libass(자막)용
 
+
+def _resolve_fontfile():
+    """drawtext 용 폰트 파일 절대경로. fontconfig 미설정 환경(Windows/컨테이너)에서
+    font=패밀리 해석이 실패해 한글이 깨지므로 fontfile 을 직접 지정한다."""
+    cands = [os.environ.get("MV_FONTFILE")]
+    cands += [
+        "C:/Windows/Fonts/malgun.ttf",              # Windows
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",   # Debian/Ubuntu
+        "/usr/share/fonts/nanum/NanumGothic.ttf",
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",        # macOS
+    ]
+    for c in cands:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
+DRAW_FONTFILE = _resolve_fontfile()
+
+
+def draw_font_spec():
+    """drawtext 필터의 폰트 지정 토큰. fontfile 우선(콜론 이스케이프), 없으면 family."""
+    if DRAW_FONTFILE:
+        # filtergraph 에서 Windows 경로 콜론은 작은따옴표+이스케이프해야 파싱된다.
+        p = DRAW_FONTFILE.replace("\\", "/").replace(":", "\\:")
+        return f"fontfile='{p}'"
+    return f"font={DRAW_FONT}"
+
 # ---------- ffmpeg helpers ----------
 
 def run(cmd, **kw):
@@ -465,7 +493,7 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         wm_file = "_wm.txt"
         write_textfile(watermark, os.path.join(work_dir, wm_file))
         parts.append(
-            f"{cur}drawtext=font={DRAW_FONT}:textfile={wm_file}:"
+            f"{cur}drawtext={draw_font_spec()}:textfile={wm_file}:"
             f"fontcolor=white@0.55:fontsize={wm_fs}:x=w-tw-{pad}:y=h-th-{int(round(30*scale))}:"
             "shadowcolor=black@0.6:shadowx=2:shadowy=2[vout]"
         )
@@ -535,14 +563,14 @@ def make_thumbnail(out_path, title, artist=None, bg=None, bg_color="0x0a0a14"):
         src = ["-f", "lavfi", "-i", f"color=c={bg_color}:s={W}x{Ht}"]
     vf.append(f"drawbox=0:0:{W}:{Ht}:color=black@0.4:t=fill")
     vf.append(
-        f"drawtext=font={DRAW_FONT}:textfile=_ttl.txt:fontcolor=white:"
+        f"drawtext={draw_font_spec()}:textfile=_ttl.txt:fontcolor=white:"
         "fontsize=92:x=(w-tw)/2:y=(h-th)/2-40:"
         "shadowcolor=black@0.8:shadowx=3:shadowy=3"
     )
     if artist:
         write_textfile(artist, os.path.join(work_dir, "_art.txt"))
         vf.append(
-            f"drawtext=font={DRAW_FONT}:textfile=_art.txt:fontcolor=white@0.85:"
+            f"drawtext={draw_font_spec()}:textfile=_art.txt:fontcolor=white@0.85:"
             "fontsize=48:x=(w-tw)/2:y=(h-th)/2+70:"
             "shadowcolor=black@0.8:shadowx=2:shadowy=2"
         )
