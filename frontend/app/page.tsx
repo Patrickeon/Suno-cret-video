@@ -7,6 +7,7 @@ import { HelpModal } from "./components/HelpModal";
 import { PublishPanel } from "./components/PublishPanel";
 import {
   API,
+  BG_PRESETS,
   inputCls,
   Job,
   JobSummary,
@@ -27,6 +28,7 @@ export default function Home() {
   const [lyricsText, setLyricsText] = useState("");
   const [lyricsFile, setLyricsFile] = useState<File | null>(null);
   const [bgFiles, setBgFiles] = useState<File[]>([]);
+  const [bgPick, setBgPick] = useState("");
 
   // 옵션
   const [viz, setViz] = useState("waves");
@@ -344,6 +346,18 @@ export default function Home() {
     }
   }
 
+  async function pickBuiltinBg(id: string) {
+    try {
+      const r = await fetch(`/bg/${id}.jpg`);
+      const blob = await r.blob();
+      setBgFiles([new File([blob], `${id}.jpg`, { type: "image/jpeg" })]);
+      setBgPick(id);
+      toast("기본 배경을 적용했어요.", "info");
+    } catch {
+      toast("배경 로드 실패", "error");
+    }
+  }
+
   async function openJob(id: string) {
     try {
       const j: Job = await (await fetch(`${API}/api/jobs/${id}`)).json();
@@ -364,10 +378,10 @@ export default function Home() {
             key={t.id}
             className={`rounded-lg px-4 py-2.5 text-sm shadow-lg backdrop-blur ${
               t.kind === "success"
-                ? "bg-emerald-500/90"
+                ? "bg-emerald-500 text-white"
                 : t.kind === "error"
-                ? "bg-red-500/90"
-                : "bg-white/15"
+                ? "bg-red-500 text-white"
+                : "border border-[var(--border)] bg-[var(--surface)] text-[var(--text)]"
             }`}
           >
             {t.text}
@@ -375,7 +389,7 @@ export default function Home() {
         ))}
       </div>
 
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-black/30 px-6 py-3.5 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--surface-2)] px-6 py-3.5 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-lg shadow-lg">
@@ -383,20 +397,20 @@ export default function Home() {
             </span>
             <div>
               <h1 className="text-base font-semibold leading-tight tracking-tight">Suno MV Studio</h1>
-              <p className="text-[11px] text-neutral-400">음원 + 가사 → AI 뮤직비디오</p>
+              <p className="text-[11px] text-[var(--text-dim)]">음원 + 가사 → AI 뮤직비디오</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex rounded-lg bg-white/5 p-1 text-sm ring-1 ring-white/10">
+            <div className="flex rounded-lg bg-[var(--surface-2)] p-1 text-sm ring-1 ring-[var(--border)]">
               <button
                 onClick={() => setMode("local")}
-                className={`rounded-md px-3 py-1.5 transition ${mode === "local" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
+                className={`rounded-md px-3 py-1.5 transition ${mode === "local" ? "bg-[var(--surface-3)] font-medium" : "text-[var(--text-dim)] hover:text-[var(--text)]"}`}
               >
                 로컬 생성
               </button>
               <button
                 onClick={() => setMode("ai")}
-                className={`rounded-md px-3 py-1.5 transition ${mode === "ai" ? "bg-white/15 font-medium" : "text-neutral-400 hover:text-neutral-200"}`}
+                className={`rounded-md px-3 py-1.5 transition ${mode === "ai" ? "bg-[var(--surface-3)] font-medium" : "text-[var(--text-dim)] hover:text-[var(--text)]"}`}
               >
                 AI 편집 ✨
               </button>
@@ -404,21 +418,21 @@ export default function Home() {
             <button
               onClick={() => setShowHelp(true)}
               title="사용법"
-              className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 ring-1 ring-white/10 hover:bg-white/10"
+              className="rounded-lg bg-[var(--surface-2)] px-3 py-1.5 text-sm text-[var(--text-dim)] ring-1 ring-[var(--border)] hover:bg-[var(--surface-3)]"
             >
               ❓
             </button>
             <button
               onClick={toggleTheme}
               title={theme === "dark" ? "라이트 모드로" : "다크 모드로"}
-              className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 ring-1 ring-white/10 hover:bg-white/10"
+              className="rounded-lg bg-[var(--surface-2)] px-3 py-1.5 text-sm text-[var(--text-dim)] ring-1 ring-[var(--border)] hover:bg-[var(--surface-3)]"
             >
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
             <button
               onClick={() => setShowSettings(true)}
               title="API 키 설정"
-              className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 ring-1 ring-white/10 hover:bg-white/10"
+              className="rounded-lg bg-[var(--surface-2)] px-3 py-1.5 text-sm text-[var(--text-dim)] ring-1 ring-[var(--border)] hover:bg-[var(--surface-3)]"
             >
               ⚙️
               {settings && (settings.llm_key_set || settings.video_key_set) && (
@@ -439,18 +453,18 @@ export default function Home() {
         <section className="space-y-6">
           {mode === "local" ? (
             <>
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-3">
-                <span className="text-xs font-medium text-neutral-400">프리셋</span>
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                <span className="text-xs font-medium text-[var(--text-dim)]">프리셋</span>
                 {Object.keys(presets).length === 0 && (
-                  <span className="text-[11px] text-neutral-500">저장된 프리셋 없음</span>
+                  <span className="text-[11px] text-[var(--text-faint)]">저장된 프리셋 없음</span>
                 )}
                 {Object.keys(presets).map((n) => (
-                  <span key={n} className="flex items-center gap-1 rounded-full bg-white/5 px-2 py-1 text-xs ring-1 ring-white/10">
+                  <span key={n} className="flex items-center gap-1 rounded-full bg-[var(--surface-2)] px-2 py-1 text-xs ring-1 ring-[var(--border)]">
                     <button onClick={() => applyPreset(n)} className="hover:text-white">{n}</button>
-                    <button onClick={() => deletePreset(n)} title="삭제" className="text-neutral-500 hover:text-red-400">✕</button>
+                    <button onClick={() => deletePreset(n)} title="삭제" className="text-[var(--text-faint)] hover:text-red-400">✕</button>
                   </span>
                 ))}
-                <button onClick={savePreset} className="ml-auto rounded-lg bg-white/10 px-3 py-1 text-xs text-neutral-200 hover:bg-white/20">
+                <button onClick={savePreset} className="ml-auto rounded-lg bg-[var(--surface-2)] px-3 py-1 text-xs text-[var(--text)] hover:bg-[var(--surface-3)]">
                   ＋ 현재 설정 저장
                 </button>
               </div>
@@ -490,7 +504,7 @@ export default function Home() {
                       type="color"
                       value={`#${subColor}`}
                       onChange={(e) => setSubColor(e.target.value.slice(1).toUpperCase())}
-                      className="h-9 w-full cursor-pointer rounded-lg bg-black/30 ring-1 ring-white/10"
+                      className="h-9 w-full cursor-pointer rounded-lg bg-[var(--surface-2)] ring-1 ring-[var(--border)]"
                     />
                   </Field>
                   <Field label="자막 크기">
@@ -513,7 +527,7 @@ export default function Home() {
 
               <Card title="2. 배경 / 비주얼" step="②">
                 <div className="space-y-1.5">
-                  <span className="text-xs font-medium text-neutral-400">빠른 프리셋</span>
+                  <span className="text-xs font-medium text-[var(--text-dim)]">빠른 프리셋</span>
                   <div className="flex flex-wrap gap-2">
                     {PRESETS.map((p) => {
                       const active = viz === p.viz && kenburns === p.kenburns && bgColor === p.bg;
@@ -524,7 +538,7 @@ export default function Home() {
                           className={`rounded-full border px-3 py-1 text-xs transition ${
                             active
                               ? "border-indigo-400 bg-indigo-500/20 text-white"
-                              : "border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10"
+                              : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-dim)] hover:bg-[var(--surface-3)]"
                           }`}
                         >
                           {p.emoji} {p.name}
@@ -533,20 +547,38 @@ export default function Home() {
                     })}
                   </div>
                 </div>
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-[var(--text-dim)]">기본 배경 (그라데이션)</span>
+                  <div className="grid grid-cols-6 gap-2">
+                    {BG_PRESETS.map((b) => (
+                      <button
+                        key={b.id}
+                        onClick={() => pickBuiltinBg(b.id)}
+                        title={b.label}
+                        className={`overflow-hidden rounded-lg ring-1 transition ${
+                          bgPick === b.id ? "ring-2 ring-indigo-400" : "ring-[var(--border)] hover:ring-indigo-300"
+                        }`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={`/bg/${b.id}.jpg`} alt={b.label} className="aspect-video w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <Dropzone
-                  label="배경 이미지 (여러 장 = 크로스페이드)"
+                  label="또는 직접 배경 이미지 (여러 장 = 크로스페이드)"
                   hint="jpg · png · webp"
                   accept="image/*"
                   icon="🖼️"
                   multiple
                   files={bgFiles}
-                  onFiles={setBgFiles}
+                  onFiles={(fs) => { setBgFiles(fs); setBgPick(""); }}
                 />
                 {bgUrls.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {bgUrls.map((u, i) => (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img key={i} src={u} alt="" className="h-16 w-24 rounded-md object-cover ring-1 ring-white/10" />
+                      <img key={i} src={u} alt="" className="h-16 w-24 rounded-md object-cover ring-1 ring-[var(--border)]" />
                     ))}
                   </div>
                 )}
@@ -602,12 +634,12 @@ export default function Home() {
                     </select>
                   </Field>
                 </div>
-                <p className="text-[11px] text-neutral-500">
+                <p className="text-[11px] text-[var(--text-faint)]">
                   1440p 이상으로 올리면 유튜브가 더 좋은 코덱(VP9)을 적용해 선명해집니다.
                 </p>
                 <Toggle checked={normalize} onChange={setNormalize} label="라우드니스 정규화 (-14 LUFS, 유튜브 표준)" />
                 <Toggle checked={master} onChange={setMaster} label="🎚 정밀 마스터링 (2-pass + 리미터, 느리지만 정확)" />
-                {master && <p className="text-[11px] text-neutral-500">측정 패스가 추가돼 렌더가 조금 더 걸립니다.</p>}
+                {master && <p className="text-[11px] text-[var(--text-faint)]">측정 패스가 추가돼 렌더가 조금 더 걸립니다.</p>}
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="페이드 인 (초)">
                     <input type="number" min={0} step={0.5} value={fadeIn} onChange={(e) => setFadeIn(Number(e.target.value))} className={inputCls} />
@@ -632,27 +664,27 @@ export default function Home() {
             </>
           ) : (
             <Card title="AI 편집 ✨" step="🤖">
-              <p className="text-xs text-neutral-400">
+              <p className="text-xs text-[var(--text-dim)]">
                 먼저 <b>로컬 생성</b>으로 기본 영상을 만든 뒤, 자연어로 수정을 요청하세요.
                 {!job && <span className="text-amber-300"> (편집할 프로젝트 없음)</span>}
               </p>
               <div className="flex flex-wrap gap-2">
                 {SUGGESTIONS.map((s) => (
-                  <button key={s} onClick={() => setChatInput(s)} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-neutral-300 hover:bg-white/10">
+                  <button key={s} onClick={() => setChatInput(s)} className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1 text-xs text-[var(--text-dim)] hover:bg-[var(--surface-3)]">
                     {s}
                   </button>
                 ))}
               </div>
-              <div className="h-72 space-y-3 overflow-y-auto rounded-xl bg-black/30 p-3 ring-1 ring-white/10">
-                {messages.length === 0 && <p className="text-xs text-neutral-500">예: &ldquo;쇼츠로 만들어줘&rdquo;, &ldquo;스펙트럼으로 바꿔줘&rdquo;</p>}
+              <div className="h-72 space-y-3 overflow-y-auto rounded-xl bg-[var(--surface-2)] p-3 ring-1 ring-[var(--border)]">
+                {messages.length === 0 && <p className="text-xs text-[var(--text-faint)]">예: &ldquo;쇼츠로 만들어줘&rdquo;, &ldquo;스펙트럼으로 바꿔줘&rdquo;</p>}
                 {messages.map((m, i) => (
                   <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
-                    <span className={`inline-block max-w-[85%] rounded-2xl px-3 py-2 text-sm ${m.role === "user" ? "bg-indigo-500/80 text-white" : "bg-white/10"}`}>
+                    <span className={`inline-block max-w-[85%] rounded-2xl px-3 py-2 text-sm ${m.role === "user" ? "bg-indigo-500/80 text-white" : "bg-[var(--surface-2)]"}`}>
                       {m.text}
                     </span>
                   </div>
                 ))}
-                {agentBusy && <p className="text-xs text-neutral-400">에이전트가 생각 중…</p>}
+                {agentBusy && <p className="text-xs text-[var(--text-dim)]">에이전트가 생각 중…</p>}
               </div>
               <div className="flex gap-2">
                 <input
@@ -667,14 +699,14 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
+              <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
                 <h3 className="flex items-center gap-2 text-sm font-medium">
                   🎥 AI 배경 영상
                   {settings && !settings.video_key_set && (
                     <span className="text-[11px] text-amber-300">(⚙️ 영상 키 필요)</span>
                   )}
                 </h3>
-                <p className="text-[11px] text-neutral-400">
+                <p className="text-[11px] text-[var(--text-dim)]">
                   프롬프트로 AI 영상 클립을 만들어 배경에 깔고 그 위에 비주얼라이저·자막을 얹어 재렌더합니다.
                 </p>
                 <div className="flex gap-2">
@@ -702,21 +734,21 @@ export default function Home() {
         <section className="space-y-6 lg:sticky lg:top-24 lg:self-start">
           <Card title="결과 미리보기">
             {!job && (
-              <div className="grid h-56 place-items-center rounded-xl border border-dashed border-white/10 text-sm text-neutral-500">
+              <div className="grid h-56 place-items-center rounded-xl border border-dashed border-[var(--border)] text-sm text-[var(--text-faint)]">
                 생성하면 여기에 영상이 표시됩니다 🎥
               </div>
             )}
             {job && busy && (
               <div className="space-y-3">
-                <div className="flex items-center justify-between text-sm text-neutral-300">
+                <div className="flex items-center justify-between text-sm text-[var(--text-dim)]">
                   <span className="flex items-center gap-2">
                     <Spinner /> {job.stage ? job.stage : job.status === "queued" ? "대기 중…" : "렌더링 중…"}
                   </span>
                   {job.status === "running" && !job.stage && job.progress > 0 && (
-                    <span className="tabular-nums text-neutral-400">{job.progress}%</span>
+                    <span className="tabular-nums text-[var(--text-dim)]">{job.progress}%</span>
                   )}
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-2)]">
                   {job.status === "running" && !job.stage && job.progress > 0 ? (
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400 transition-[width] duration-500"
@@ -728,29 +760,29 @@ export default function Home() {
                 </div>
                 <button
                   onClick={() => cancelJob(job.id)}
-                  className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-neutral-300 hover:bg-red-500/30 hover:text-white"
+                  className="rounded-lg bg-[var(--surface-2)] px-3 py-1.5 text-xs text-[var(--text-dim)] hover:bg-red-500/30 hover:text-white"
                 >
                   ✕ 취소
                 </button>
               </div>
             )}
             {job?.status === "cancelled" && (
-              <p className="text-sm text-neutral-400">취소된 작업입니다.</p>
+              <p className="text-sm text-[var(--text-dim)]">취소된 작업입니다.</p>
             )}
             {job?.status === "error" && (
               <div className="space-y-2">
                 <p className="text-sm text-red-400">렌더 실패: {job.error}</p>
-                {job.log && <pre className="max-h-48 overflow-auto rounded-lg bg-black/40 p-3 text-xs whitespace-pre-wrap text-neutral-400">{job.log}</pre>}
+                {job.log && <pre className="max-h-48 overflow-auto rounded-lg bg-[var(--code-bg)] p-3 text-xs whitespace-pre-wrap text-[var(--text-dim)]">{job.log}</pre>}
               </div>
             )}
             {job?.status === "done" && job.video && (
               <div className="space-y-3">
                 <video src={`${API}/api/jobs/${job.id}/video`} controls className="mx-auto max-h-[68vh] w-full rounded-xl bg-black" />
                 <div className="flex flex-wrap gap-2 text-sm">
-                  <a href={`${API}/api/jobs/${job.id}/video`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">⬇ 영상</a>
-                  {job.thumb && <a href={`${API}/api/jobs/${job.id}/thumb`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">⬇ 썸네일</a>}
+                  <a href={`${API}/api/jobs/${job.id}/video`} download className="rounded-lg bg-[var(--surface-2)] px-3 py-2 hover:bg-[var(--surface-3)]">⬇ 영상</a>
+                  {job.thumb && <a href={`${API}/api/jobs/${job.id}/thumb`} download className="rounded-lg bg-[var(--surface-2)] px-3 py-2 hover:bg-[var(--surface-3)]">⬇ 썸네일</a>}
                   <button onClick={() => setMode("ai")} className="rounded-lg bg-indigo-500/80 px-3 py-2 text-white hover:bg-indigo-500">✨ AI로 수정</button>
-                  <button onClick={() => deleteJob(job.id)} className="rounded-lg bg-white/10 px-3 py-2 text-neutral-300 hover:bg-red-500/30 hover:text-white">🗑 삭제</button>
+                  <button onClick={() => deleteJob(job.id)} className="rounded-lg bg-[var(--surface-2)] px-3 py-2 text-[var(--text-dim)] hover:bg-red-500/30 hover:text-white">🗑 삭제</button>
                 </div>
               </div>
             )}
@@ -769,7 +801,7 @@ export default function Home() {
 
           <Card title="최근 작업">
             {recent.length === 0 ? (
-              <p className="text-xs text-neutral-500">아직 없음</p>
+              <p className="text-xs text-[var(--text-faint)]">아직 없음</p>
             ) : (
               <div className="grid grid-cols-3 gap-2">
                 {recent.slice(0, 9).map((r) => (
@@ -777,17 +809,17 @@ export default function Home() {
                     key={r.id}
                     onClick={() => openJob(r.id)}
                     title={r.title}
-                    className="group relative cursor-pointer overflow-hidden rounded-lg ring-1 ring-white/10 hover:ring-indigo-400"
+                    className="group relative cursor-pointer overflow-hidden rounded-lg ring-1 ring-[var(--border)] hover:ring-indigo-400"
                   >
                     {r.thumb ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={`${API}/api/jobs/${r.id}/thumb`} alt="" className="aspect-video w-full object-cover" />
                     ) : (
-                      <div className="grid aspect-video place-items-center bg-white/5 text-[10px] text-neutral-400">
+                      <div className="grid aspect-video place-items-center bg-[var(--surface-2)] text-[10px] text-[var(--text-dim)]">
                         {r.status === "error" ? "실패" : r.status === "cancelled" ? "취소됨" : r.status}
                       </div>
                     )}
-                    <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[10px] text-neutral-200">
+                    <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[10px] text-[var(--text)]">
                       {r.shorts ? "📱 " : ""}{r.title || r.id}
                     </span>
                     <button

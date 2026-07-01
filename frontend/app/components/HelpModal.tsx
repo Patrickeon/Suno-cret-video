@@ -37,25 +37,25 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="max-h-[85vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-white/10 bg-neutral-900 p-6 shadow-2xl"
+        className="max-h-[85vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--modal-bg)] p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold">❓ 사용법</h2>
-          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-200">✕</button>
+          <button onClick={onClose} className="text-[var(--text-dim)] hover:text-[var(--text)]">✕</button>
         </div>
-        <p className="text-xs text-neutral-400">
+        <p className="text-xs text-[var(--text-dim)]">
           음원 + 가사를 올리면 영상·자막·썸네일이 한 번에 나오는 뮤직비디오 스튜디오입니다.
         </p>
         <ol className="space-y-3">
           {STEPS.map((s) => (
-            <li key={s.title} className="flex gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
+            <li key={s.title} className="flex gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-sm">
                 {s.icon}
               </span>
               <div className="space-y-0.5">
-                <h3 className="text-sm font-medium text-neutral-200">{s.title}</h3>
-                <p className="text-xs leading-relaxed text-neutral-400">{s.body}</p>
+                <h3 className="text-sm font-medium text-[var(--text)]">{s.title}</h3>
+                <p className="text-xs leading-relaxed text-[var(--text-dim)]">{s.body}</p>
               </div>
             </li>
           ))}

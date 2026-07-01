@@ -45,6 +45,15 @@ export interface Toast {
   kind: "info" | "success" | "error";
 }
 
+export const BG_PRESETS = [
+  { id: "midnight", label: "미드나잇" },
+  { id: "plum", label: "플럼" },
+  { id: "ocean", label: "오션" },
+  { id: "forest", label: "포레스트" },
+  { id: "ember", label: "엠버" },
+  { id: "dusk", label: "더스크" },
+];
+
 export const PRESETS = [
   { name: "Lo-fi", emoji: "🌙", viz: "waves", kenburns: true, bg: "0x12101a" },
   { name: "발라드", emoji: "🎹", viz: "spectrum", kenburns: true, bg: "0x0a0a14" },
@@ -66,4 +75,4 @@ export const SUGGESTIONS = [
 ];
 
 export const inputCls =
-  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40";
+  "w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] outline-none transition focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40";

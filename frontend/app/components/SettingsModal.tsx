@@ -41,14 +41,14 @@ export function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg space-y-5 rounded-2xl border border-white/10 bg-neutral-900 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-lg space-y-5 rounded-2xl border border-[var(--border)] bg-[var(--modal-bg)] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold">⚙️ API 키 설정 (BYOK)</h2>
-          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-200">✕</button>
+          <button onClick={onClose} className="text-[var(--text-dim)] hover:text-[var(--text)]">✕</button>
         </div>
-        <p className="text-xs text-neutral-400">키는 백엔드 로컬에만 저장되고 화면엔 다시 표시되지 않습니다(설정 여부만 표시). provider는 언제든 교체 가능.</p>
+        <p className="text-xs text-[var(--text-dim)]">키는 백엔드 로컬에만 저장되고 화면엔 다시 표시되지 않습니다(설정 여부만 표시). provider는 언제든 교체 가능.</p>
 
-        <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
+        <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4">
           <h3 className="text-sm font-medium">AI 편집 (LLM)</h3>
           <Field label="Provider">
             <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} className={inputCls}>
@@ -84,7 +84,7 @@ export function SettingsModal({
           </Field>
         </div>
 
-        <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
+        <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4">
           <h3 className="text-sm font-medium">AI 영상 생성 (배경)</h3>
           <Field label="Provider">
             <select value={videoProvider} onChange={(e) => setVideoProvider(e.target.value)} className={inputCls}>

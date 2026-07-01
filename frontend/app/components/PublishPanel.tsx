@@ -129,7 +129,7 @@ export function PublishPanel({
       {/* 메타데이터 */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-neutral-400">제목 · 설명 · 태그</span>
+          <span className="text-xs font-medium text-[var(--text-dim)]">제목 · 설명 · 태그</span>
           <button
             onClick={genMeta}
             disabled={metaBusy || !llmKeySet}
@@ -146,24 +146,24 @@ export function PublishPanel({
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <input readOnly value={meta.title || ""} className={inputCls} />
-              <button onClick={() => copy(meta.title || "")} className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/20">복사</button>
+              <button onClick={() => copy(meta.title || "")} className="shrink-0 rounded-lg bg-[var(--surface-2)] px-3 py-2 text-xs hover:bg-[var(--surface-3)]">복사</button>
             </div>
             <div className="flex items-start gap-2">
               <textarea readOnly value={descBlock} rows={6} className={`${inputCls} resize-y`} />
-              <button onClick={() => copy(descBlock)} className="shrink-0 rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/20">복사</button>
+              <button onClick={() => copy(descBlock)} className="shrink-0 rounded-lg bg-[var(--surface-2)] px-3 py-2 text-xs hover:bg-[var(--surface-3)]">복사</button>
             </div>
           </div>
         )}
       </div>
 
       {/* 롱폼 + 쇼츠 배치 */}
-      <div className="space-y-2 border-t border-white/10 pt-3">
-        <span className="text-xs font-medium text-neutral-400">롱폼 + 쇼츠 자동 배치</span>
-        <p className="text-[11px] text-neutral-500">
+      <div className="space-y-2 border-t border-[var(--border)] pt-3">
+        <span className="text-xs font-medium text-[var(--text-dim)]">롱폼 + 쇼츠 자동 배치</span>
+        <p className="text-[11px] text-[var(--text-faint)]">
           후렴(가장 큰 구간)을 자동으로 찾아 세로 쇼츠로 잘라냅니다. 롱폼 1개와 함께 한 번에 렌더돼요.
         </p>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-neutral-400">쇼츠 개수</label>
+          <label className="text-xs text-[var(--text-dim)]">쇼츠 개수</label>
           <input
             type="number"
             min={0}
@@ -183,7 +183,7 @@ export function PublishPanel({
         {batchIds.length > 0 && (
           <a
             href={`${API}/api/jobs/zip?ids=${batchIds.join(",")}`}
-            className="inline-block rounded-lg bg-white/10 px-3 py-2 text-xs text-neutral-200 hover:bg-white/20"
+            className="inline-block rounded-lg bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-3)]"
           >
             📦 완료분 전체 ZIP 다운로드
           </a>
@@ -191,12 +191,12 @@ export function PublishPanel({
       </div>
 
       {/* YouTube 업로드 */}
-      <div className="space-y-2 border-t border-white/10 pt-3">
-        <span className="text-xs font-medium text-neutral-400">YouTube 업로드</span>
+      <div className="space-y-2 border-t border-[var(--border)] pt-3">
+        <span className="text-xs font-medium text-[var(--text-dim)]">YouTube 업로드</span>
         {!ytReady ? (
-          <p className="text-[11px] text-neutral-500">
-            연결되지 않았습니다. <code className="text-neutral-400">backend/yt_upload.py</code> 안내대로
-            OAuth 설정 후 <code className="text-neutral-400">python -m yt_upload</code> 로 1회 인증하면 활성화됩니다.
+          <p className="text-[11px] text-[var(--text-faint)]">
+            연결되지 않았습니다. <code className="text-[var(--text-dim)]">backend/yt_upload.py</code> 안내대로
+            OAuth 설정 후 <code className="text-[var(--text-dim)]">python -m yt_upload</code> 로 1회 인증하면 활성화됩니다.
           </p>
         ) : (
           <div className="flex items-center gap-2">
