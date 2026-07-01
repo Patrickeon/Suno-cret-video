@@ -55,3 +55,16 @@ def test_fmt_ass_time():
 
 def test_ass_escape_braces():
     assert "{" not in mv.ass_escape("a{b}c")
+
+
+def test_hex_to_ass_bgr_order():
+    assert mv.hex_to_ass("FFFFFF") == "&H00FFFFFF"
+    assert mv.hex_to_ass("FFD700") == "&H0000D7FF"   # 골드 RRGGBB -> BGR
+    assert mv.hex_to_ass("#FF0000") == "&H000000FF"   # # 접두 허용, 빨강
+    assert mv.hex_to_ass("bad") == "&H00FFFFFF"       # 잘못된 값 -> 흰색
+
+
+def test_parse_time_invalid_raises():
+    import pytest
+    with pytest.raises(ValueError):
+        mv.parse_time("abc")

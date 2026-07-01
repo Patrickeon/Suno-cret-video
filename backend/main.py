@@ -61,6 +61,19 @@ class UploadError(Exception):
     pass
 
 
+def _clip_start_ok(s: str) -> bool:
+    """clip_start 가 'mm:ss'/'초' 로 파싱 가능한지 (make_mv.parse_time 과 동일 규칙)."""
+    s = (s or "").strip()
+    if not s:
+        return True
+    try:
+        for p in s.split(":"):
+            float(p)
+        return True
+    except ValueError:
+        return False
+
+
 def _check_ext(filename: str, allowed: set, label: str):
     ext = os.path.splitext(filename or "")[1].lower()
     if ext not in allowed:
@@ -85,13 +98,34 @@ def _save_upload(up: UploadFile, dest: str, max_mb: int):
             f.write(chunk)
 
 
+# 실행 중 렌더 프로세스 / 대기·실행 중 Future 추적 (취소용)
+_PROCS = {}      # jid -> subprocess.Popen
+_FUTURES = {}    # jid -> concurrent.futures.Future
+
+
+def _cancelled(jid):
+    return (jobs.get(jid) or {}).get("status") == "cancelled"
+
+
 def _do_render(jid, d, audio, lyrics, bg_paths, opts):
-    jobs.update(jid, status="running", opts=opts, progress=0)
+    if _cancelled(jid):
+        return
+    jobs.update(jid, status="running", opts=opts, progress=0, stage="")
     try:
         code, log, out = render.run_render(
             d, audio, lyrics, bg_paths, opts,
             on_progress=lambda p: jobs.update(jid, progress=p),
+            on_proc=lambda pr: _PROCS.__setitem__(jid, pr),
         )
+    except Exception as e:  # noqa: BLE001
+        _PROCS.pop(jid, None)
+        if not _cancelled(jid):
+            jobs.update(jid, status="error", error=str(e))
+        return
+    _PROCS.pop(jid, None)
+    if _cancelled(jid):
+        return  # 취소된 잡은 결과를 덮어쓰지 않음
+    try:
         log = log[-2000:]  # 잡 응답이 비대해지지 않게 끝부분만 보관
         thumb = os.path.splitext(out)[0] + "_thumb.jpg"
         has_thumb = os.path.exists(thumb)
@@ -108,6 +142,14 @@ def _do_render(jid, d, audio, lyrics, bg_paths, opts):
                         error="렌더 실패 (로그 확인)")
     except Exception as e:  # noqa: BLE001
         jobs.update(jid, status="error", error=str(e))
+
+
+def _submit(fn, jid, *args):
+    """렌더 작업을 큐에 넣고 Future 를 추적(취소용). 완료 시 자동 정리."""
+    fut = EXECUTOR.submit(fn, *args)
+    _FUTURES[jid] = fut
+    fut.add_done_callback(lambda _f: _FUTURES.pop(jid, None))
+    return fut
 
 
 @app.get("/api/health")
@@ -157,6 +199,9 @@ async def create_render(
     fade_out: float = Form(0.0),
     vignette: bool = Form(False),
     film_grain: bool = Form(False),
+    sub_color: str = Form("FFFFFF"),
+    sub_size: float = Form(1.0),
+    sub_pos: str = Form("bottom"),
 ):
     # 입력 검증
     try:
@@ -168,6 +213,11 @@ async def create_render(
                 _check_ext(b.filename, IMAGE_EXTS, "배경 이미지")
     except UploadError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    if not _clip_start_ok(clip_start):
+        return JSONResponse(
+            {"error": f"클립 시작 형식 오류: '{clip_start}' (mm:ss 또는 초로 입력)"},
+            status_code=400,
+        )
 
     job_title = title.strip() or os.path.splitext(audio.filename or "untitled")[0]
     jid, d = jobs.create_job(title=job_title)
@@ -214,13 +264,16 @@ async def create_render(
         "fade_out": fade_out,
         "vignette": vignette,
         "film_grain": film_grain,
+        "sub_color": sub_color,
+        "sub_size": sub_size,
+        "sub_pos": sub_pos,
     }
 
     # 재렌더(AI 편집) 때 같은 자산을 재사용하도록 경로 보관
     assets = {"audio": audio_path, "lyrics": lyrics_path, "bg": bg_paths}
     jobs.update(jid, assets=assets)
 
-    EXECUTOR.submit(_do_render, jid, d, audio_path, lyrics_path, bg_paths, opts)
+    _submit(_do_render, jid, jid, d, audio_path, lyrics_path, bg_paths, opts)
     return {"job_id": jid, "status": "queued"}
 
 
@@ -266,8 +319,8 @@ def agent_edit(body: AgentBody):
     new_opts = {**cur_opts, **patch}
     njid, nd = jobs.create_job(title=job.get("title", ""))
     jobs.update(njid, assets=assets, shorts=bool(new_opts.get("shorts")))
-    EXECUTOR.submit(_do_render, njid, nd, assets["audio"], assets["lyrics"],
-                    assets["bg"], new_opts)
+    _submit(_do_render, njid, njid, nd, assets["audio"], assets["lyrics"],
+            assets["bg"], new_opts)
     return {"reply": reply, "job_id": njid, "options": new_opts, "patch": patch}
 
 
@@ -279,13 +332,14 @@ class AiVideoBody(BaseModel):
 
 def _do_ai_video(njid, nd, assets, base_job, prompt, aspect, provider_name, key):
     """AI 영상 클립 생성 -> 그 클립을 --video-bg 로 깔고 같은 자산으로 재렌더."""
-    jobs.update(njid, status="running", progress=0)
+    jobs.update(njid, status="running", progress=0,
+                stage="🎥 AI 영상 클립 생성 중… (수십 초~수 분 소요)")
     clip_path = os.path.join(nd, "aibg.mp4")
     try:
         vp = video_providers.get_video_provider(provider_name, api_key=key)
         vp.generate(prompt, clip_path, aspect=aspect)
     except Exception as e:  # noqa: BLE001
-        jobs.update(njid, status="error", error=f"AI 영상 생성 실패: {e}")
+        jobs.update(njid, status="error", error=f"AI 영상 생성 실패: {e}", stage="")
         return
     opts = {**(base_job.get("opts") or {}), "video_bg": clip_path}
     _do_render(njid, nd, assets["audio"], assets["lyrics"], assets["bg"], opts)
@@ -313,8 +367,8 @@ def ai_video(body: AiVideoBody):
     aspect = body.aspect or ("9:16" if job.get("shorts") else "16:9")
     njid, nd = jobs.create_job(title=job.get("title", ""))
     jobs.update(njid, assets=assets, shorts=bool(job.get("shorts")))
-    EXECUTOR.submit(_do_ai_video, njid, nd, assets, job, body.prompt,
-                    aspect, cfg["video_provider"], key)
+    _submit(_do_ai_video, njid, njid, nd, assets, job, body.prompt,
+            aspect, cfg["video_provider"], key)
     return {"job_id": njid, "status": "queued"}
 
 
@@ -382,20 +436,23 @@ def batch(body: BatchBody):
     lf_opts = {**base, "shorts": False, "clip_start": ""}
     lf_jid, lf_d = jobs.create_job(title=f"{title} (롱폼)")
     jobs.update(lf_jid, assets=assets, shorts=False)
-    EXECUTOR.submit(_do_render, lf_jid, lf_d, assets["audio"], assets["lyrics"],
-                    assets["bg"], lf_opts)
+    _submit(_do_render, lf_jid, lf_jid, lf_d, assets["audio"], assets["lyrics"],
+            assets["bg"], lf_opts)
 
     # 쇼츠 (후렴 자동 감지)
     n = max(0, min(int(body.shorts_count), 6))
-    starts = highlights.detect_peaks(assets["audio"], n=n, clip_len=body.clip_len) if n else []
+    # 쇼츠끼리 겹치지 않도록 최소 간격을 clip_len 이상으로
+    gap = max(body.clip_len, 10.0)
+    starts = highlights.detect_peaks(
+        assets["audio"], n=n, clip_len=body.clip_len, min_gap=gap) if n else []
     short_jids = []
     for i, st in enumerate(starts):
         s_opts = {**base, "shorts": True, "clip_start": f"{st:.1f}",
                   "clip_len": body.clip_len}
         sjid, sd = jobs.create_job(title=f"{title} (쇼츠 {i + 1})")
         jobs.update(sjid, assets=assets, shorts=True)
-        EXECUTOR.submit(_do_render, sjid, sd, assets["audio"], assets["lyrics"],
-                        assets["bg"], s_opts)
+        _submit(_do_render, sjid, sjid, sd, assets["audio"], assets["lyrics"],
+                assets["bg"], s_opts)
         short_jids.append(sjid)
 
     return {"longform": lf_jid, "shorts": short_jids,
@@ -405,6 +462,46 @@ def batch(body: BatchBody):
 @app.get("/api/jobs")
 def list_jobs():
     return {"jobs": jobs.list_jobs()}
+
+
+@app.post("/api/jobs/{jid}/cancel")
+def cancel_job(jid: str):
+    j = jobs.get(jid)
+    if not j:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if j["status"] in ("done", "error", "cancelled"):
+        return {"ok": True, "status": j["status"]}
+    # 상태를 먼저 cancelled 로 → 실행 콜백이 결과를 덮어쓰지 않음
+    jobs.update(jid, status="cancelled", error="사용자가 취소함", progress=0)
+    fut = _FUTURES.get(jid)
+    if fut:
+        fut.cancel()  # 아직 시작 안 했으면 큐에서 제거
+    proc = _PROCS.get(jid)
+    if proc:
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+    return {"ok": True, "status": "cancelled"}
+
+
+@app.delete("/api/jobs/{jid}")
+def delete_job(jid: str):
+    j = jobs.get(jid)
+    if not j:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    proc = _PROCS.get(jid)
+    if proc:  # 실행 중이면 먼저 죽인다
+        jobs.update(jid, status="cancelled")
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+    fut = _FUTURES.get(jid)
+    if fut:
+        fut.cancel()
+    jobs.remove(jid)
+    return {"ok": True}
 
 
 @app.get("/api/jobs/{jid}")

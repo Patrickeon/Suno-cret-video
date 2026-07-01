@@ -88,6 +88,11 @@ EDIT_TOOL = {
             "fade_out": {"type": "number", "description": "아웃트로 페이드 길이(초, 영상+오디오)"},
             "vignette": {"type": "boolean", "description": "비네트(가장자리 어둡게)"},
             "film_grain": {"type": "boolean", "description": "필름 그레인 질감"},
+            "sub_color": {"type": "string",
+                          "description": "자막 색 RRGGBB 16진 (예: FFD700=골드)"},
+            "sub_size": {"type": "number", "description": "자막 크기 배율 (1.0 기본)"},
+            "sub_pos": {"type": "string", "enum": ["bottom", "middle", "top"],
+                        "description": "자막 세로 위치"},
         },
     },
 }

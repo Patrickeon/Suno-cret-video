@@ -202,17 +202,39 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Lyric,{font},{fontsize},&H00FFFFFF,&H000088FF,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,4,2,2,{mlr},{mlr},{marginv},1
+Style: Lyric,{font},{fontsize},{primary},&H000088FF,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,4,2,{align},{mlr},{mlr},{marginv},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-def write_ass(cues, path, lay, font=SUB_FONT):
+def hex_to_ass(color):
+    """'RRGGBB' 또는 '#RRGGBB' -> ASS PrimaryColour '&H00BBGGRR'. 잘못되면 흰색."""
+    c = str(color).strip().lstrip("#")
+    if len(c) != 6:
+        c = "FFFFFF"
+    try:
+        int(c, 16)
+    except ValueError:
+        c = "FFFFFF"
+    return f"&H00{c[4:6]}{c[2:4]}{c[0:2]}".upper()
+
+
+def write_ass(cues, path, lay, font=SUB_FONT, color="FFFFFF", size_mult=1.0,
+              pos="bottom"):
+    fontsize = max(1, int(round(lay["font_size"] * float(size_mult))))
+    align = {"bottom": 2, "middle": 5, "top": 8}.get(pos, 2)
+    if pos == "top":
+        marginv = int(lay["H"] * 0.08)
+    elif pos == "middle":
+        marginv = 10  # 세로 중앙 정렬은 MarginV 영향 작음
+    else:
+        marginv = lay["margin_v"]
     with open(path, "w", encoding="utf-8") as f:
         f.write(ASS_HEADER.format(
-            W=lay["W"], H=lay["H"], font=font, fontsize=lay["font_size"],
-            mlr=lay["margin_lr"], marginv=lay["margin_v"],
+            W=lay["W"], H=lay["H"], font=font, fontsize=fontsize,
+            mlr=lay["margin_lr"], marginv=marginv,
+            primary=hex_to_ass(color), align=align,
         ))
         for start, end, text in cues:
             if end <= start:
@@ -500,6 +522,10 @@ def main():
     ap.add_argument("--outro", type=float, default=0.0, help="txt 균등분배: 끝 여백(초)")
     ap.add_argument("--lrc-out", help="초안 LRC 만 생성하고 종료")
     ap.add_argument("--font", default=SUB_FONT, help="자막 폰트(한글 지원)")
+    ap.add_argument("--sub-color", default="FFFFFF", help="자막 색 (RRGGBB, 기본 흰색)")
+    ap.add_argument("--sub-size", type=float, default=1.0, help="자막 크기 배율 (기본 1.0)")
+    ap.add_argument("--sub-pos", choices=["bottom", "middle", "top"], default="bottom",
+                    help="자막 세로 위치")
     ap.add_argument("--keep-ass", action="store_true")
     # 쇼츠 / 클립
     ap.add_argument("--shorts", action="store_true", help="세로 9:16 (1080x1920)")
@@ -532,7 +558,12 @@ def main():
     print(f"[info] 곡 길이: {full_dur:.1f}s")
 
     # 클립 구간 결정
-    clip_start = parse_time(args.clip_start) if args.clip_start else None
+    clip_start = None
+    if args.clip_start:
+        try:
+            clip_start = parse_time(args.clip_start)
+        except (ValueError, TypeError):
+            sys.exit(f"--clip-start 형식 오류: '{args.clip_start}' (mm:ss 또는 초로 입력)")
     clip_len = None
     if clip_start is not None:
         clip_len = min(args.clip_len, full_dur - clip_start)
@@ -572,7 +603,8 @@ def main():
     out_dir = os.path.dirname(os.path.abspath(args.out)) or "."
     os.makedirs(out_dir, exist_ok=True)
     ass_path = os.path.join(out_dir, "_sub.ass")
-    write_ass(cues, ass_path, lay, font=args.font)
+    write_ass(cues, ass_path, lay, font=args.font, color=args.sub_color,
+              size_mult=args.sub_size, pos=args.sub_pos)
 
     render(args.audio, ass_path, args.out, lay,
            bg_list=args.bg, viz=args.viz, bg_color=args.bg_color,

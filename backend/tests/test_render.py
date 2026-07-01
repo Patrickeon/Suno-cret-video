@@ -78,3 +78,17 @@ def test_quality_defaults_omitted():
     cmd = _build({"res": "1080", "fps": 30})
     assert "--res" not in cmd and "--fps" not in cmd
     assert "--normalize" not in cmd and "--vignette" not in cmd
+
+
+def test_subtitle_style_options():
+    cmd = _build({"sub_color": "FFD700", "sub_size": 1.2, "sub_pos": "top"})
+    assert cmd[cmd.index("--sub-color") + 1] == "FFD700"
+    assert cmd[cmd.index("--sub-size") + 1] == "1.2"
+    assert cmd[cmd.index("--sub-pos") + 1] == "top"
+
+
+def test_subtitle_defaults_omitted():
+    cmd = _build({"sub_color": "FFFFFF", "sub_size": 1.0, "sub_pos": "bottom"})
+    assert "--sub-color" not in cmd
+    assert "--sub-size" not in cmd
+    assert "--sub-pos" not in cmd

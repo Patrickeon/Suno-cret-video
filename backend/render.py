@@ -58,20 +58,29 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--vignette"]
     if opts.get("film_grain"):
         cmd += ["--film-grain"]
+    # 자막 스타일
+    if opts.get("sub_color") and str(opts["sub_color"]).upper() != "FFFFFF":
+        cmd += ["--sub-color", str(opts["sub_color"])]
+    if opts.get("sub_size") and float(opts["sub_size"]) != 1.0:
+        cmd += ["--sub-size", str(opts["sub_size"])]
+    if opts.get("sub_pos") and opts["sub_pos"] != "bottom":
+        cmd += ["--sub-pos", str(opts["sub_pos"])]
 
     return cmd, out
 
 
-def run_render(job_dir, audio, lyrics, bg_list, opts, on_progress=None):
+def run_render(job_dir, audio, lyrics, bg_list, opts, on_progress=None, on_proc=None):
     """렌더 실행. 반환: (returncode, log, out_path).
 
     make_mv.py 가 출력하는 'MV_PROGRESS <pct>' 라인은 진행률 콜백으로 보내고
-    로그에선 제외한다."""
+    로그에선 제외한다. on_proc 가 주어지면 Popen 객체를 넘겨 취소(kill)에 쓴다."""
     cmd, out = build_command(job_dir, audio, lyrics, bg_list, opts)
     proc = subprocess.Popen(
         cmd, cwd=job_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace",
     )
+    if on_proc:
+        on_proc(proc)
     log_lines = []
     for line in proc.stdout:
         if line.startswith("MV_PROGRESS"):

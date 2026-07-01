@@ -3,12 +3,13 @@
 
 export const API = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
 
-export type JobStatus = "queued" | "running" | "done" | "error";
+export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
 export interface Job {
   id: string;
   status: JobStatus;
   progress: number;
+  stage?: string;
   error: string | null;
   log: string;
   video: boolean;

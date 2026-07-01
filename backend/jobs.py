@@ -57,8 +57,9 @@ def create_job(title=""):
     with _LOCK:
         _JOBS[jid] = {
             "id": jid,
-            "status": "queued",   # queued | running | done | error
+            "status": "queued",   # queued | running | done | error | cancelled
             "progress": 0,        # 0~100 (running 중 ffmpeg 진행률)
+            "stage": "",          # running 중 단계 안내(예: AI 영상 생성)
             "error": None,
             "log": "",
             "video": False,
@@ -88,6 +89,13 @@ def get(jid):
 
 def job_dir(jid):
     return os.path.join(DATA_DIR, jid)
+
+
+def remove(jid):
+    """잡을 메모리·디스크에서 완전히 제거."""
+    with _LOCK:
+        _JOBS.pop(jid, None)
+    shutil.rmtree(os.path.join(DATA_DIR, jid), ignore_errors=True)
 
 
 def list_jobs(limit=50):

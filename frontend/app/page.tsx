@@ -40,6 +40,11 @@ export default function Home() {
   const [watermark, setWatermark] = useState("");
   const [align, setAlign] = useState(false);
 
+  // 자막 스타일
+  const [subColor, setSubColor] = useState("FFFFFF");
+  const [subSize, setSubSize] = useState(1.0);
+  const [subPos, setSubPos] = useState("bottom");
+
   // 품질 / 마감 (유튜브)
   const [res, setRes] = useState("1080");
   const [fps, setFps] = useState(30);
@@ -132,10 +137,11 @@ export default function Home() {
         if (!r.ok) return;
         const j: Job = await r.json();
         setJob(j);
-        if (j.status === "done" || j.status === "error") {
+        if (j.status === "done" || j.status === "error" || j.status === "cancelled") {
           if (pollRef.current) clearInterval(pollRef.current);
           refreshRecent();
-          toast(j.status === "done" ? "렌더 완료 ✓" : "렌더 실패", j.status === "done" ? "success" : "error");
+          if (j.status === "done") toast("렌더 완료 ✓", "success");
+          else if (j.status === "error") toast("렌더 실패", "error");
         }
       } catch {
         /* 일시 오류 무시 */
@@ -173,6 +179,9 @@ export default function Home() {
       fd.append("fade_out", String(fadeOut));
       fd.append("vignette", String(vignette));
       fd.append("film_grain", String(filmGrain));
+      fd.append("sub_color", subColor);
+      fd.append("sub_size", String(subSize));
+      fd.append("sub_pos", subPos);
 
       const r = await fetch(`${API}/api/render`, { method: "POST", body: fd });
       const data = await r.json();
@@ -239,6 +248,30 @@ export default function Home() {
       toast(e instanceof Error ? e.message : "AI 영상 요청 실패", "error");
     } finally {
       setAiVideoBusy(false);
+    }
+  }
+
+  async function cancelJob(id: string) {
+    try {
+      await fetch(`${API}/api/jobs/${id}/cancel`, { method: "POST" });
+      toast("취소를 요청했어요.", "info");
+    } catch {
+      toast("취소 실패", "error");
+    }
+  }
+
+  async function deleteJob(id: string) {
+    try {
+      const r = await fetch(`${API}/api/jobs/${id}`, { method: "DELETE" });
+      if (!r.ok) throw new Error();
+      if (job?.id === id) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        setJob(null);
+      }
+      refreshRecent();
+      toast("삭제했어요.", "info");
+    } catch {
+      toast("삭제 실패", "error");
     }
   }
 
@@ -365,6 +398,31 @@ export default function Home() {
                   onFiles={(fs) => setLyricsFile(fs[0] ?? null)}
                 />
                 <Toggle checked={align} onChange={setAlign} label="AI 자동 가사 정렬 (백엔드 stable-ts 필요)" />
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="자막 색">
+                    <input
+                      type="color"
+                      value={`#${subColor}`}
+                      onChange={(e) => setSubColor(e.target.value.slice(1).toUpperCase())}
+                      className="h-9 w-full cursor-pointer rounded-lg bg-black/30 ring-1 ring-white/10"
+                    />
+                  </Field>
+                  <Field label="자막 크기">
+                    <select value={subSize} onChange={(e) => setSubSize(Number(e.target.value))} className={inputCls}>
+                      <option value={0.85}>작게</option>
+                      <option value={1}>보통</option>
+                      <option value={1.2}>크게</option>
+                      <option value={1.4}>아주 크게</option>
+                    </select>
+                  </Field>
+                  <Field label="자막 위치">
+                    <select value={subPos} onChange={(e) => setSubPos(e.target.value)} className={inputCls}>
+                      <option value="bottom">하단</option>
+                      <option value="middle">중앙</option>
+                      <option value="top">상단</option>
+                    </select>
+                  </Field>
+                </div>
               </Card>
 
               <Card title="2. 배경 / 비주얼" step="②">
@@ -564,14 +622,14 @@ export default function Home() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-sm text-neutral-300">
                   <span className="flex items-center gap-2">
-                    <Spinner /> {job.status === "queued" ? "대기 중…" : "렌더링 중…"}
+                    <Spinner /> {job.stage ? job.stage : job.status === "queued" ? "대기 중…" : "렌더링 중…"}
                   </span>
-                  {job.status === "running" && job.progress > 0 && (
+                  {job.status === "running" && !job.stage && job.progress > 0 && (
                     <span className="tabular-nums text-neutral-400">{job.progress}%</span>
                   )}
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                  {job.status === "running" && job.progress > 0 ? (
+                  {job.status === "running" && !job.stage && job.progress > 0 ? (
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400 transition-[width] duration-500"
                       style={{ width: `${job.progress}%` }}
@@ -580,7 +638,16 @@ export default function Home() {
                     <div className="h-full w-1/3 animate-[loading_1.2s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400" />
                   )}
                 </div>
+                <button
+                  onClick={() => cancelJob(job.id)}
+                  className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-neutral-300 hover:bg-red-500/30 hover:text-white"
+                >
+                  ✕ 취소
+                </button>
               </div>
+            )}
+            {job?.status === "cancelled" && (
+              <p className="text-sm text-neutral-400">취소된 작업입니다.</p>
             )}
             {job?.status === "error" && (
               <div className="space-y-2">
@@ -595,6 +662,7 @@ export default function Home() {
                   <a href={`${API}/api/jobs/${job.id}/video`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">⬇ 영상</a>
                   {job.thumb && <a href={`${API}/api/jobs/${job.id}/thumb`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">⬇ 썸네일</a>}
                   <button onClick={() => setMode("ai")} className="rounded-lg bg-indigo-500/80 px-3 py-2 text-white hover:bg-indigo-500">✨ AI로 수정</button>
+                  <button onClick={() => deleteJob(job.id)} className="rounded-lg bg-white/10 px-3 py-2 text-neutral-300 hover:bg-red-500/30 hover:text-white">🗑 삭제</button>
                 </div>
               </div>
             )}
@@ -617,24 +685,31 @@ export default function Home() {
             ) : (
               <div className="grid grid-cols-3 gap-2">
                 {recent.slice(0, 9).map((r) => (
-                  <button
+                  <div
                     key={r.id}
                     onClick={() => openJob(r.id)}
                     title={r.title}
-                    className="group relative overflow-hidden rounded-lg ring-1 ring-white/10 hover:ring-indigo-400"
+                    className="group relative cursor-pointer overflow-hidden rounded-lg ring-1 ring-white/10 hover:ring-indigo-400"
                   >
                     {r.thumb ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={`${API}/api/jobs/${r.id}/thumb`} alt="" className="aspect-video w-full object-cover" />
                     ) : (
                       <div className="grid aspect-video place-items-center bg-white/5 text-[10px] text-neutral-400">
-                        {r.status === "error" ? "실패" : r.status}
+                        {r.status === "error" ? "실패" : r.status === "cancelled" ? "취소됨" : r.status}
                       </div>
                     )}
                     <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[10px] text-neutral-200">
                       {r.shorts ? "📱 " : ""}{r.title || r.id}
                     </span>
-                  </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteJob(r.id); }}
+                      title="삭제"
+                      className="absolute right-1 top-1 hidden h-5 w-5 place-items-center rounded bg-black/60 text-[10px] text-white hover:bg-red-500 group-hover:grid"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
