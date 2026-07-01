@@ -1,0 +1,4 @@
+# 개발/테스트 전용 의존성.  pip install -r requirements-dev.txt
+# 테스트: cd backend && python -m pytest tests/ -q
+-r requirements.txt
+pytest

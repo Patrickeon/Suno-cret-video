@@ -80,6 +80,52 @@ class _PollingHTTPProvider(VideoProvider):
         return {"Authorization": f"Bearer {self.api_key}"}
 
 
+class ReplicateProvider(_PollingHTTPProvider):
+    """Replicate — 문서화된 공개 API. 단일 토큰으로 여러 text-to-video 모델 사용.
+
+    흐름: POST /v1/models/{model}/predictions -> 예측 id -> GET 으로 poll ->
+    status=succeeded 면 output(영상 URL) 다운로드.
+    모델은 REPLICATE_MODEL 환경변수 또는 생성 시 model= 인자로 교체 가능.
+    """
+    ENV_KEY = "REPLICATE_API_TOKEN"
+    DEFAULT_BASE_URL = "https://api.replicate.com/v1"
+    DEFAULT_MODEL = "minimax/video-01"  # text-to-video. 다른 모델로 교체 가능
+
+    def __init__(self, api_key=None, base_url=None, model=None, **kw):
+        super().__init__(api_key=api_key, base_url=base_url, **kw)
+        self.model = model or os.environ.get("REPLICATE_MODEL", self.DEFAULT_MODEL)
+        self._poll_url = None
+
+    def _submit(self, prompt, duration, aspect, **opts):
+        payload = {"input": {"prompt": prompt}}
+        if aspect:
+            payload["input"]["aspect_ratio"] = aspect  # 미지원 모델은 무시
+        r = self.client.post(
+            f"{self.base_url}/models/{self.model}/predictions",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=payload,
+        )
+        r.raise_for_status()
+        data = r.json()
+        self._poll_url = (data.get("urls") or {}).get("get")
+        return data["id"]
+
+    def _poll(self, job_id):
+        url = self._poll_url or f"{self.base_url}/predictions/{job_id}"
+        r = self.client.get(url, headers=self._headers())
+        r.raise_for_status()
+        d = r.json()
+        status = d.get("status")
+        if status == "succeeded":
+            out = d.get("output")
+            if isinstance(out, list):
+                out = out[-1] if out else None
+            return ("done", out) if out else ("error", None)
+        if status in ("failed", "canceled"):
+            return "error", None
+        return "pending", None
+
+
 class KaiberProvider(_PollingHTTPProvider):
     ENV_KEY = "KAIBER_API_KEY"
     DEFAULT_BASE_URL = "https://api.kaiber.ai"  # TODO: 실제 베이스 URL 확인
@@ -108,6 +154,7 @@ class HiggsfieldProvider(_PollingHTTPProvider):
 
 
 _PROVIDERS = {
+    "replicate": ReplicateProvider,
     "kaiber": KaiberProvider,
     "higgsfield": HiggsfieldProvider,
 }

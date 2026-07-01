@@ -58,6 +58,7 @@ def create_job(title=""):
         _JOBS[jid] = {
             "id": jid,
             "status": "queued",   # queued | running | done | error
+            "progress": 0,        # 0~100 (running 중 ffmpeg 진행률)
             "error": None,
             "log": "",
             "video": False,

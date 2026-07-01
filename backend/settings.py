@@ -18,14 +18,14 @@ DEFAULTS = {
     "llm_provider": "claude",
     "llm_model": "claude-sonnet-4-6",
     "llm_api_key": "",
-    "video_provider": "kaiber",
+    "video_provider": "replicate",
     "video_api_key": "",
 }
 
 # 환경변수 폴백 (UI에 키가 없으면 사용)
 _ENV_FALLBACK = {
     "llm_api_key": "ANTHROPIC_API_KEY",
-    "video_api_key": "KAIBER_API_KEY",
+    "video_api_key": "REPLICATE_API_TOKEN",
 }
 
 _state = None

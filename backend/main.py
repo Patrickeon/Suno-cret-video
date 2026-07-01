@@ -14,10 +14,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import agent
+import highlights
 import jobs
 import render
 import settings
 import storage
+import video_providers
 
 STORAGE = storage.get_storage()
 
@@ -84,9 +86,12 @@ def _save_upload(up: UploadFile, dest: str, max_mb: int):
 
 
 def _do_render(jid, d, audio, lyrics, bg_paths, opts):
-    jobs.update(jid, status="running", opts=opts)
+    jobs.update(jid, status="running", opts=opts, progress=0)
     try:
-        code, log, out = render.run_render(d, audio, lyrics, bg_paths, opts)
+        code, log, out = render.run_render(
+            d, audio, lyrics, bg_paths, opts,
+            on_progress=lambda p: jobs.update(jid, progress=p),
+        )
         log = log[-2000:]  # 잡 응답이 비대해지지 않게 끝부분만 보관
         thumb = os.path.splitext(out)[0] + "_thumb.jpg"
         has_thumb = os.path.exists(thumb)
@@ -96,7 +101,8 @@ def _do_render(jid, d, audio, lyrics, bg_paths, opts):
                 STORAGE.save_outputs(jid, d, names)
             except Exception as e:  # noqa: BLE001
                 print(f"[storage] 업로드 실패(jid={jid}): {e}")
-            jobs.update(jid, status="done", log=log, video=True, thumb=has_thumb)
+            jobs.update(jid, status="done", log=log, video=True,
+                        thumb=has_thumb, progress=100)
         else:
             jobs.update(jid, status="error", log=log,
                         error="렌더 실패 (로그 확인)")
@@ -139,10 +145,18 @@ async def create_render(
     clip_start: str = Form(""),
     clip_len: float = Form(30),
     kenburns: bool = Form(True),
+    bg_color: str = Form("0x0a0a14"),
     title: str = Form(""),
     artist: str = Form(""),
     watermark: str = Form(""),
     align: str = Form("none"),
+    res: str = Form("1080"),
+    fps: int = Form(30),
+    normalize: bool = Form(False),
+    fade_in: float = Form(0.0),
+    fade_out: float = Form(0.0),
+    vignette: bool = Form(False),
+    film_grain: bool = Form(False),
 ):
     # 입력 검증
     try:
@@ -188,10 +202,18 @@ async def create_render(
         "clip_start": clip_start,
         "clip_len": clip_len,
         "kenburns": kenburns,
+        "bg_color": bg_color,
         "title": title,
         "artist": artist,
         "watermark": watermark,
         "align": align,
+        "res": res,
+        "fps": fps,
+        "normalize": normalize,
+        "fade_in": fade_in,
+        "fade_out": fade_out,
+        "vignette": vignette,
+        "film_grain": film_grain,
     }
 
     # 재렌더(AI 편집) 때 같은 자산을 재사용하도록 경로 보관
@@ -247,6 +269,137 @@ def agent_edit(body: AgentBody):
     EXECUTOR.submit(_do_render, njid, nd, assets["audio"], assets["lyrics"],
                     assets["bg"], new_opts)
     return {"reply": reply, "job_id": njid, "options": new_opts, "patch": patch}
+
+
+class AiVideoBody(BaseModel):
+    job_id: str
+    prompt: str
+    aspect: str | None = None
+
+
+def _do_ai_video(njid, nd, assets, base_job, prompt, aspect, provider_name, key):
+    """AI 영상 클립 생성 -> 그 클립을 --video-bg 로 깔고 같은 자산으로 재렌더."""
+    jobs.update(njid, status="running", progress=0)
+    clip_path = os.path.join(nd, "aibg.mp4")
+    try:
+        vp = video_providers.get_video_provider(provider_name, api_key=key)
+        vp.generate(prompt, clip_path, aspect=aspect)
+    except Exception as e:  # noqa: BLE001
+        jobs.update(njid, status="error", error=f"AI 영상 생성 실패: {e}")
+        return
+    opts = {**(base_job.get("opts") or {}), "video_bg": clip_path}
+    _do_render(njid, nd, assets["audio"], assets["lyrics"], assets["bg"], opts)
+
+
+@app.post("/api/ai-video")
+def ai_video(body: AiVideoBody):
+    job = jobs.get(body.job_id)
+    if not job:
+        return JSONResponse({"error": "프로젝트를 찾을 수 없습니다."}, status_code=404)
+    assets = job.get("assets")
+    if not assets:
+        return JSONResponse({"error": "이 프로젝트에는 영상에 깔 자산이 없습니다."}, status_code=400)
+    if not body.prompt.strip():
+        return JSONResponse({"error": "영상 프롬프트를 입력하세요."}, status_code=400)
+
+    key = settings.get_key("video_api_key")
+    if not key:
+        return JSONResponse(
+            {"error": "AI 영상 키가 없습니다. ⚙️ 설정에서 영상 provider API 키를 입력하세요."},
+            status_code=400,
+        )
+
+    cfg = settings.get_raw()
+    aspect = body.aspect or ("9:16" if job.get("shorts") else "16:9")
+    njid, nd = jobs.create_job(title=job.get("title", ""))
+    jobs.update(njid, assets=assets, shorts=bool(job.get("shorts")))
+    EXECUTOR.submit(_do_ai_video, njid, nd, assets, job, body.prompt,
+                    aspect, cfg["video_provider"], key)
+    return {"job_id": njid, "status": "queued"}
+
+
+def _read_lyrics(path):
+    if path and os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            pass
+    return ""
+
+
+class MetaBody(BaseModel):
+    job_id: str
+
+
+@app.post("/api/metadata")
+def metadata(body: MetaBody):
+    job = jobs.get(body.job_id)
+    if not job:
+        return JSONResponse({"error": "프로젝트를 찾을 수 없습니다."}, status_code=404)
+    llm_key = settings.get_key("llm_api_key")
+    if not llm_key:
+        return JSONResponse(
+            {"error": "AI 키가 없습니다. ⚙️ 설정에서 Claude API 키를 입력하세요."},
+            status_code=400,
+        )
+    cfg = settings.get_raw()
+    opts = job.get("opts") or {}
+    assets = job.get("assets") or {}
+    lyrics = _read_lyrics(assets.get("lyrics"))
+    try:
+        md = agent.generate_metadata(
+            opts.get("title") or job.get("title", ""), opts.get("artist", ""),
+            lyrics, provider_name=cfg["llm_provider"], model=cfg["llm_model"],
+            api_key=llm_key,
+        )
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"메타데이터 생성 오류: {e}"}, status_code=500)
+    if not md:
+        return JSONResponse({"error": "메타데이터를 생성하지 못했습니다."}, status_code=500)
+    return md
+
+
+class BatchBody(BaseModel):
+    job_id: str
+    shorts_count: int = 3
+    clip_len: float = 30.0
+
+
+@app.post("/api/batch")
+def batch(body: BatchBody):
+    """곡 1개 -> 롱폼 1 + 후렴 쇼츠 N (각각 별도 잡으로 비동기 렌더)."""
+    job = jobs.get(body.job_id)
+    if not job:
+        return JSONResponse({"error": "프로젝트를 찾을 수 없습니다."}, status_code=404)
+    assets = job.get("assets")
+    if not assets:
+        return JSONResponse({"error": "이 프로젝트에는 자산이 없습니다."}, status_code=400)
+    base = job.get("opts") or {}
+    title = job.get("title", "")
+
+    # 롱폼 (전체, 세로 아님)
+    lf_opts = {**base, "shorts": False, "clip_start": ""}
+    lf_jid, lf_d = jobs.create_job(title=f"{title} (롱폼)")
+    jobs.update(lf_jid, assets=assets, shorts=False)
+    EXECUTOR.submit(_do_render, lf_jid, lf_d, assets["audio"], assets["lyrics"],
+                    assets["bg"], lf_opts)
+
+    # 쇼츠 (후렴 자동 감지)
+    n = max(0, min(int(body.shorts_count), 6))
+    starts = highlights.detect_peaks(assets["audio"], n=n, clip_len=body.clip_len) if n else []
+    short_jids = []
+    for i, st in enumerate(starts):
+        s_opts = {**base, "shorts": True, "clip_start": f"{st:.1f}",
+                  "clip_len": body.clip_len}
+        sjid, sd = jobs.create_job(title=f"{title} (쇼츠 {i + 1})")
+        jobs.update(sjid, assets=assets, shorts=True)
+        EXECUTOR.submit(_do_render, sjid, sd, assets["audio"], assets["lyrics"],
+                        assets["bg"], s_opts)
+        short_jids.append(sjid)
+
+    return {"longform": lf_jid, "shorts": short_jids,
+            "detected": len(short_jids)}
 
 
 @app.get("/api/jobs")

@@ -42,6 +42,30 @@ SUB_FONT = _DEFAULT_FONT    # libass(자막)용
 def run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
+def run_ffmpeg_progress(cmd, work_dir, duration):
+    """ffmpeg 를 -progress 로 돌리며 진행률을 'MV_PROGRESS <pct>' 로 stdout 출력.
+    반환: (returncode, stderr_text). 진행률을 모르는 호출(썸네일 등)엔 쓰지 않는다."""
+    cmd = cmd + ["-progress", "pipe:1", "-nostats", "-loglevel", "error"]
+    proc = subprocess.Popen(
+        cmd, cwd=work_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+    )
+    last = -1
+    for line in proc.stdout:
+        # ffmpeg progress 블록의 out_time_ms 값은 마이크로초 단위다.
+        if line.startswith("out_time_ms="):
+            try:
+                sec = int(line.split("=", 1)[1]) / 1_000_000
+            except ValueError:
+                continue
+            pct = int(min(99, max(0, sec / duration * 100))) if duration else 0
+            if pct != last:
+                last = pct
+                print(f"MV_PROGRESS {pct}", flush=True)
+    proc.wait()
+    err = proc.stderr.read() if proc.stderr else ""
+    return proc.returncode, err
+
 def probe_duration(audio):
     out = subprocess.check_output([
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -63,15 +87,21 @@ def parse_time(s):
 
 # ---------- 레이아웃 (해상도/방향) ----------
 
-def get_layout(shorts):
+def get_layout(shorts, scale=1.0):
+    """방향별 기준 레이아웃을 scale 배로 키운다 (1.0=1080 기준, 1.333=1440p, 2.0=4K).
+    폰트·여백·비주얼라이저 높이가 함께 커져 비율이 유지된다."""
+    def s(v):
+        # 짝수로 (yuv420p·showcqt 등은 홀수 치수에서 깨짐)
+        n = int(round(v * scale))
+        return n - (n % 2)
     if shorts:
         return dict(
-            W=1080, H=1920, viz_h=320, viz_y="H-h-140",
-            font_size=78, margin_v=820, margin_lr=90,
+            W=s(1080), H=s(1920), viz_h=s(320), viz_y=f"H-h-{s(140)}",
+            font_size=s(78), margin_v=s(820), margin_lr=s(90),
         )
     return dict(
-        W=1920, H=1080, viz_h=260, viz_y="H-h-50",
-        font_size=72, margin_v=360, margin_lr=120,
+        W=s(1920), H=s(1080), viz_h=s(260), viz_y=f"H-h-{s(50)}",
+        font_size=s(72), margin_v=s(360), margin_lr=s(120),
     )
 
 # ---------- 가사 파싱 ----------
@@ -280,6 +310,11 @@ def build_viz(audio_spec, lay, viz):
     if viz == "spectrum":
         return [f"[{audio_spec}]showspectrum=s={W}x{h}:mode=combined:"
                 "color=intensity:scale=cbrt:slide=scroll,format=yuva420p[viz]"], "[viz]"
+    if viz == "bars":
+        # 주파수 막대그래프 (음악에 반응) — 컬러풀하고 선명해 가사 영상에 잘 맞음
+        return [f"[{audio_spec}]showfreqs=s={W}x{h}:mode=bar:ascale=log:"
+                f"fscale=log:win_size=2048:colors=0x6d28d9|0xec4899:rate={FPS},"
+                "format=yuva420p[viz]"], "[viz]"
     return [], None
 
 # ---------- 텍스트 파일(drawtext용) ----------
@@ -293,7 +328,9 @@ def write_textfile(text, path):
 def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            bg_color="0x0a0a14", duration=None, kenburns=True,
            clip_start=None, clip_len=None, watermark=None, logo=None,
-           video_bg=None, crf=20):
+           video_bg=None, crf=20, scale=1.0,
+           normalize=False, fade_in=0.0, fade_out=0.0,
+           vignette=False, grain=False):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
@@ -302,9 +339,34 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         bg_list, lay, duration, kenburns, bg_color, video_bg=video_bg)
     audio_spec = f"{audio_idx}:a"
 
-    viz_parts, viz_label = build_viz(audio_spec, lay, viz)
+    parts = list(bg_parts)
 
-    parts = list(bg_parts) + list(viz_parts)
+    # ---- 오디오 필터 체인 (loudnorm / 페이드) ----
+    # 유튜브 기준 -14 LUFS 정규화 + 인트로/아웃트로 페이드.
+    afilters = []
+    if normalize:
+        afilters.append("loudnorm=I=-14:TP=-1.5:LRA=11")
+    if fade_in and fade_in > 0:
+        afilters.append(f"afade=t=in:st=0:d={fade_in:.3f}")
+    if fade_out and fade_out > 0 and duration:
+        afilters.append(f"afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}")
+
+    # 비주얼라이저도 오디오 입력을 쓰므로, 필터가 있으면 asplit 으로 나눠 공급한다.
+    viz_audio = audio_spec
+    if afilters and viz != "none":
+        parts.append(f"[{audio_spec}]asplit=2[av][ao]")
+        viz_audio = "av"
+        parts.append(f"[ao]{','.join(afilters)}[amain]")
+        audio_map = "[amain]"
+    elif afilters:
+        parts.append(f"[{audio_spec}]{','.join(afilters)}[amain]")
+        audio_map = "[amain]"
+    else:
+        audio_map = audio_spec
+
+    viz_parts, viz_label = build_viz(viz_audio, lay, viz)
+    parts += list(viz_parts)
+
     if viz_label:
         parts.append(f"{bg_label}{viz_label}overlay=0:{lay['viz_y']}:"
                      "format=auto[vmix]")
@@ -316,21 +378,39 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     parts.append(f"{cur}subtitles={ass_name}[vsub]")
     cur = "[vsub]"
 
-    # 워터마크 / 로고
+    # 워터마크 / 로고 (해상도 scale 에 맞춰 크기/여백 조정)
+    wm_fs = int(round(36 * scale))
+    pad = int(round(40 * scale))
     logo_idx = None
     if logo:
         logo_idx = audio_idx + 1  # 오디오 다음 입력
-        parts.append(f"{cur}[{logo_idx}:v]overlay=W-w-40:H-h-40[vout]")
+        parts.append(f"{cur}[{logo_idx}:v]overlay=W-w-{pad}:H-h-{pad}[vout]")
         cur = "[vout]"
     elif watermark:
         wm_file = "_wm.txt"
         write_textfile(watermark, os.path.join(work_dir, wm_file))
         parts.append(
             f"{cur}drawtext=font={DRAW_FONT}:textfile={wm_file}:"
-            "fontcolor=white@0.55:fontsize=36:x=w-tw-36:y=h-th-30:"
+            f"fontcolor=white@0.55:fontsize={wm_fs}:x=w-tw-{pad}:y=h-th-{int(round(30*scale))}:"
             "shadowcolor=black@0.6:shadowx=2:shadowy=2[vout]"
         )
         cur = "[vout]"
+
+    # ---- 영상 피니셔 (분위기) : 비네트 -> 필름그레인 -> 페이드 ----
+    if vignette:
+        parts.append(f"{cur}vignette=PI/4[vvig]")
+        cur = "[vvig]"
+    if grain:
+        parts.append(f"{cur}noise=alls=8:allf=t[vgrain]")
+        cur = "[vgrain]"
+    vfades = []
+    if fade_in and fade_in > 0:
+        vfades.append(f"fade=t=in:st=0:d={fade_in:.3f}")
+    if fade_out and fade_out > 0 and duration:
+        vfades.append(f"fade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}")
+    if vfades:
+        parts.append(f"{cur}{','.join(vfades)}[vfade]")
+        cur = "[vfade]"
 
     full_filter = ";".join(parts)
     final_v = cur
@@ -347,10 +427,11 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     cmd += [
         "-filter_complex", full_filter,
         "-map", final_v,
-        "-map", audio_spec,
+        "-map", audio_map,
         "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "320k",
+        "-profile:v", "high", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "320k", "-ar", "48000",
+        "-movflags", "+faststart",
         "-shortest",
     ]
     if duration:
@@ -358,8 +439,11 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     cmd += [os.path.abspath(out)]
 
     print(f"[ffmpeg] 렌더 시작 ({W}x{H}, {duration:.1f}s)...")
-    if run(cmd, cwd=work_dir).returncode != 0:
+    rc, err = run_ffmpeg_progress(cmd, work_dir, duration)
+    if rc != 0:
+        sys.stderr.write(err)
         sys.exit("ffmpeg 렌더 실패")
+    print("MV_PROGRESS 100", flush=True)
     print(f"[done] {os.path.abspath(out)}")
 
 # ---------- 썸네일 ----------
@@ -404,7 +488,7 @@ def main():
     ap.add_argument("--video-bg", help="배경 영상 (AI 생성 클립 등, 이미지보다 우선)")
     ap.add_argument("--out", default="mv.mp4", help="출력 mp4")
     ap.add_argument("--viz", default="waves",
-                    choices=["waves", "cqt", "spectrum", "none"])
+                    choices=["waves", "cqt", "spectrum", "bars", "none"])
     ap.add_argument("--bg-color", default="0x0a0a14")
     ap.add_argument("--kenburns", action=argparse.BooleanOptionalAction,
                     default=True, help="배경 줌/팬 (기본 on, --no-kenburns 로 끔)")
@@ -427,7 +511,22 @@ def main():
     ap.add_argument("--thumb-out", help="썸네일 경로 (기본 <out>_thumb.jpg)")
     ap.add_argument("--watermark", help="우하단 워터마크 텍스트")
     ap.add_argument("--logo", help="우하단 로고 PNG (watermark보다 우선)")
+    # 유튜브 인코딩 / 오디오 / 분위기
+    ap.add_argument("--res", choices=["1080", "1440", "2160"], default="1080",
+                    help="출력 세로 해상도. 1440/2160 은 유튜브에서 VP9 코덱을 받아 더 선명")
+    ap.add_argument("--fps", type=int, default=30, choices=[24, 30, 60],
+                    help="프레임레이트 (60 이면 비주얼라이저가 부드러움)")
+    ap.add_argument("--normalize", action="store_true",
+                    help="유튜브 기준 -14 LUFS 라우드니스 정규화")
+    ap.add_argument("--fade-in", type=float, default=0.0, help="인트로 페이드(초, 영상+오디오)")
+    ap.add_argument("--fade-out", type=float, default=0.0, help="아웃트로 페이드(초, 영상+오디오)")
+    ap.add_argument("--vignette", action="store_true", help="비네트(가장자리 어둡게)")
+    ap.add_argument("--film-grain", action="store_true", help="필름 그레인(노이즈) 질감")
     args = ap.parse_args()
+
+    global FPS
+    FPS = args.fps
+    scale = {"1080": 1.0, "1440": 4 / 3, "2160": 2.0}[args.res]
 
     full_dur = probe_duration(args.audio)
     print(f"[info] 곡 길이: {full_dur:.1f}s")
@@ -468,7 +567,7 @@ def main():
     if clip_start is not None:
         cues = slice_cues_for_clip(cues, clip_start, render_dur)
 
-    lay = get_layout(args.shorts)
+    lay = get_layout(args.shorts, scale)
 
     out_dir = os.path.dirname(os.path.abspath(args.out)) or "."
     os.makedirs(out_dir, exist_ok=True)
@@ -480,7 +579,9 @@ def main():
            duration=render_dur, kenburns=args.kenburns,
            clip_start=clip_start, clip_len=clip_len,
            watermark=args.watermark, logo=args.logo,
-           video_bg=args.video_bg)
+           video_bg=args.video_bg, scale=scale,
+           normalize=args.normalize, fade_in=args.fade_in, fade_out=args.fade_out,
+           vignette=args.vignette, grain=args.film_grain)
 
     # 썸네일
     if args.title:

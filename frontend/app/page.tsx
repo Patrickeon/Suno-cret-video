@@ -1,50 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-const API = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
-
-type JobStatus = "queued" | "running" | "done" | "error";
-interface Job {
-  id: string;
-  status: JobStatus;
-  error: string | null;
-  log: string;
-  video: boolean;
-  thumb: boolean;
-}
-interface JobSummary {
-  id: string;
-  status: JobStatus;
-  video: boolean;
-  thumb: boolean;
-  created: number;
-  title: string;
-  shorts: boolean;
-}
-interface ChatMsg {
-  role: "user" | "assistant";
-  text: string;
-}
-interface Settings {
-  llm_provider: string;
-  llm_model: string;
-  llm_key_set: boolean;
-  video_provider: string;
-  video_key_set: boolean;
-}
-interface Toast {
-  id: number;
-  text: string;
-  kind: "info" | "success" | "error";
-}
-
-const SUGGESTIONS = [
-  "쇼츠 세로형으로 만들어줘",
-  "막대 스펙트럼으로 바꿔줘",
-  "배경 켄번스 꺼줘",
-  "후렴부터 30초만 잘라줘",
-];
+import { Card, Dropzone, Field, Spinner, Toggle } from "./components/ui";
+import { SettingsModal } from "./components/SettingsModal";
+import { HelpModal } from "./components/HelpModal";
+import { PublishPanel } from "./components/PublishPanel";
+import {
+  API,
+  inputCls,
+  Job,
+  JobSummary,
+  ChatMsg,
+  PRESETS,
+  Settings,
+  SUGGESTIONS,
+  Toast,
+} from "./lib/studio";
 
 let toastSeq = 0;
 
@@ -63,10 +34,20 @@ export default function Home() {
   const [clipStart, setClipStart] = useState("");
   const [clipLen, setClipLen] = useState(30);
   const [kenburns, setKenburns] = useState(true);
+  const [bgColor, setBgColor] = useState("0x0a0a14");
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
   const [watermark, setWatermark] = useState("");
   const [align, setAlign] = useState(false);
+
+  // 품질 / 마감 (유튜브)
+  const [res, setRes] = useState("1080");
+  const [fps, setFps] = useState(30);
+  const [normalize, setNormalize] = useState(true);
+  const [fadeIn, setFadeIn] = useState(0);
+  const [fadeOut, setFadeOut] = useState(0);
+  const [vignette, setVignette] = useState(false);
+  const [filmGrain, setFilmGrain] = useState(false);
 
   // 잡 / 결과
   const [job, setJob] = useState<Job | null>(null);
@@ -79,10 +60,32 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
 
-  // 설정 / 토스트
+  // AI 배경 영상
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiVideoBusy, setAiVideoBusy] = useState(false);
+
+  // 설정 / 도움말 / 테마 / 토스트
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // 사전 스크립트가 적용한 테마를 상태에 동기화 (마운트 시 1회)
+  useEffect(() => {
+    setTheme(document.documentElement.classList.contains("light") ? "light" : "dark");
+  }, []);
+
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.classList.toggle("light", next === "light");
+    try {
+      localStorage.setItem("theme", next);
+    } catch {
+      /* localStorage 불가 환경 무시 */
+    }
+  }
 
   const toast = useCallback((text: string, kind: Toast["kind"] = "info") => {
     const id = ++toastSeq;
@@ -158,15 +161,23 @@ export default function Home() {
       fd.append("clip_start", clipStart);
       fd.append("clip_len", String(clipLen));
       fd.append("kenburns", String(kenburns));
+      fd.append("bg_color", bgColor);
       fd.append("title", title);
       fd.append("artist", artist);
       fd.append("watermark", watermark);
       fd.append("align", align ? "auto" : "none");
+      fd.append("res", res);
+      fd.append("fps", String(fps));
+      fd.append("normalize", String(normalize));
+      fd.append("fade_in", String(fadeIn));
+      fd.append("fade_out", String(fadeOut));
+      fd.append("vignette", String(vignette));
+      fd.append("film_grain", String(filmGrain));
 
       const r = await fetch(`${API}/api/render`, { method: "POST", body: fd });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `서버 오류 (${r.status})`);
-      setJob({ id: data.job_id, status: "queued", error: null, log: "", video: false, thumb: false });
+      setJob({ id: data.job_id, status: "queued", progress: 0, error: null, log: "", video: false, thumb: false });
       poll(data.job_id);
       toast("렌더를 시작했어요.", "info");
     } catch (e) {
@@ -196,12 +207,38 @@ export default function Home() {
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || `오류 (${r.status})`);
       setMessages((m) => [...m, { role: "assistant", text: data.reply || "변경을 적용했어요." }]);
-      setJob({ id: data.job_id, status: "queued", error: null, log: "", video: false, thumb: false });
+      setJob({ id: data.job_id, status: "queued", progress: 0, error: null, log: "", video: false, thumb: false });
       poll(data.job_id);
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", text: "⚠ " + (e instanceof Error ? e.message : "에이전트 오류") }]);
     } finally {
       setAgentBusy(false);
+    }
+  }
+
+  async function generateAiVideo() {
+    const prompt = aiPrompt.trim();
+    if (!prompt) return;
+    if (!job || job.status !== "done") {
+      toast("먼저 '로컬 생성'으로 기본 영상을 만든 뒤 AI 배경을 생성하세요.", "error");
+      return;
+    }
+    setAiVideoBusy(true);
+    try {
+      const r = await fetch(`${API}/api/ai-video`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: job.id, prompt }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || `오류 (${r.status})`);
+      setJob({ id: data.job_id, status: "queued", progress: 0, error: null, log: "", video: false, thumb: false });
+      poll(data.job_id);
+      toast("AI 배경 영상 생성 + 재렌더를 시작했어요. 수십 초~수 분 걸릴 수 있어요.", "info");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "AI 영상 요청 실패", "error");
+    } finally {
+      setAiVideoBusy(false);
     }
   }
 
@@ -217,7 +254,7 @@ export default function Home() {
   const busy = job?.status === "queued" || job?.status === "running";
 
   return (
-    <div className="min-h-full bg-[radial-gradient(80%_60%_at_50%_-10%,#1e1b4b_0%,#0a0a0f_55%)] text-neutral-100">
+    <div className="app-shell min-h-full">
       {/* 토스트 */}
       <div className="fixed right-4 top-4 z-[60] flex flex-col gap-2">
         {toasts.map((t) => (
@@ -263,6 +300,20 @@ export default function Home() {
               </button>
             </div>
             <button
+              onClick={() => setShowHelp(true)}
+              title="사용법"
+              className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 ring-1 ring-white/10 hover:bg-white/10"
+            >
+              ❓
+            </button>
+            <button
+              onClick={toggleTheme}
+              title={theme === "dark" ? "라이트 모드로" : "다크 모드로"}
+              className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 ring-1 ring-white/10 hover:bg-white/10"
+            >
+              {theme === "dark" ? "☀️" : "🌙"}
+            </button>
+            <button
               onClick={() => setShowSettings(true)}
               title="API 키 설정"
               className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-neutral-300 ring-1 ring-white/10 hover:bg-white/10"
@@ -279,6 +330,7 @@ export default function Home() {
       {showSettings && (
         <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onSave={saveSettings} />
       )}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
 
       <main className="mx-auto grid max-w-6xl gap-7 px-6 py-8 lg:grid-cols-2">
         {/* 왼쪽 */}
@@ -316,6 +368,27 @@ export default function Home() {
               </Card>
 
               <Card title="2. 배경 / 비주얼" step="②">
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-neutral-400">빠른 프리셋</span>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESETS.map((p) => {
+                      const active = viz === p.viz && kenburns === p.kenburns && bgColor === p.bg;
+                      return (
+                        <button
+                          key={p.name}
+                          onClick={() => { setViz(p.viz); setKenburns(p.kenburns); setBgColor(p.bg); }}
+                          className={`rounded-full border px-3 py-1 text-xs transition ${
+                            active
+                              ? "border-indigo-400 bg-indigo-500/20 text-white"
+                              : "border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10"
+                          }`}
+                        >
+                          {p.emoji} {p.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 <Dropzone
                   label="배경 이미지 (여러 장 = 크로스페이드)"
                   hint="jpg · png · webp"
@@ -336,6 +409,7 @@ export default function Home() {
                 <Field label="비주얼라이저">
                   <select value={viz} onChange={(e) => setViz(e.target.value)} className={inputCls}>
                     <option value="waves">파형 (waves)</option>
+                    <option value="bars">컬러 막대 (bars)</option>
                     <option value="cqt">막대 스펙트럼 (cqt)</option>
                     <option value="spectrum">스펙트럼 (spectrum)</option>
                     <option value="none">없음</option>
@@ -365,6 +439,41 @@ export default function Home() {
                 <Field label="워터마크 (우하단)">
                   <input value={watermark} onChange={(e) => setWatermark(e.target.value)} placeholder="@내채널" className={inputCls} />
                 </Field>
+              </Card>
+
+              <Card title="4. 품질 / 마감 (유튜브)" step="④">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="해상도">
+                    <select value={res} onChange={(e) => setRes(e.target.value)} className={inputCls}>
+                      <option value="1080">1080p (FHD)</option>
+                      <option value="1440">1440p (QHD · 권장)</option>
+                      <option value="2160">2160p (4K)</option>
+                    </select>
+                  </Field>
+                  <Field label="프레임레이트">
+                    <select value={fps} onChange={(e) => setFps(Number(e.target.value))} className={inputCls}>
+                      <option value={30}>30 fps</option>
+                      <option value={60}>60 fps</option>
+                      <option value={24}>24 fps (영화)</option>
+                    </select>
+                  </Field>
+                </div>
+                <p className="text-[11px] text-neutral-500">
+                  1440p 이상으로 올리면 유튜브가 더 좋은 코덱(VP9)을 적용해 선명해집니다.
+                </p>
+                <Toggle checked={normalize} onChange={setNormalize} label="라우드니스 정규화 (-14 LUFS, 유튜브 표준)" />
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="페이드 인 (초)">
+                    <input type="number" min={0} step={0.5} value={fadeIn} onChange={(e) => setFadeIn(Number(e.target.value))} className={inputCls} />
+                  </Field>
+                  <Field label="페이드 아웃 (초)">
+                    <input type="number" min={0} step={0.5} value={fadeOut} onChange={(e) => setFadeOut(Number(e.target.value))} className={inputCls} />
+                  </Field>
+                </div>
+                <div className="flex flex-wrap gap-x-6 gap-y-2">
+                  <Toggle checked={vignette} onChange={setVignette} label="비네트" />
+                  <Toggle checked={filmGrain} onChange={setFilmGrain} label="필름 그레인" />
+                </div>
               </Card>
 
               <button
@@ -411,6 +520,34 @@ export default function Home() {
                   보내기
                 </button>
               </div>
+
+              <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3">
+                <h3 className="flex items-center gap-2 text-sm font-medium">
+                  🎥 AI 배경 영상
+                  {settings && !settings.video_key_set && (
+                    <span className="text-[11px] text-amber-300">(⚙️ 영상 키 필요)</span>
+                  )}
+                </h3>
+                <p className="text-[11px] text-neutral-400">
+                  프롬프트로 AI 영상 클립을 만들어 배경에 깔고 그 위에 비주얼라이저·자막을 얹어 재렌더합니다.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !aiVideoBusy && generateAiVideo()}
+                    placeholder="예: 네온 도시 야경을 천천히 비행하는 시점"
+                    className={inputCls}
+                  />
+                  <button
+                    onClick={generateAiVideo}
+                    disabled={aiVideoBusy}
+                    className="shrink-0 rounded-lg bg-fuchsia-500 px-4 py-2 text-sm font-medium text-white hover:bg-fuchsia-400 disabled:opacity-50"
+                  >
+                    {aiVideoBusy ? "생성 중…" : "생성"}
+                  </button>
+                </div>
+              </div>
             </Card>
           )}
         </section>
@@ -425,11 +562,23 @@ export default function Home() {
             )}
             {job && busy && (
               <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm text-neutral-300">
-                  <Spinner /> {job.status === "queued" ? "대기 중…" : "렌더링 중…"}
+                <div className="flex items-center justify-between text-sm text-neutral-300">
+                  <span className="flex items-center gap-2">
+                    <Spinner /> {job.status === "queued" ? "대기 중…" : "렌더링 중…"}
+                  </span>
+                  {job.status === "running" && job.progress > 0 && (
+                    <span className="tabular-nums text-neutral-400">{job.progress}%</span>
+                  )}
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full w-1/3 animate-[loading_1.2s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400" />
+                  {job.status === "running" && job.progress > 0 ? (
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400 transition-[width] duration-500"
+                      style={{ width: `${job.progress}%` }}
+                    />
+                  ) : (
+                    <div className="h-full w-1/3 animate-[loading_1.2s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-400" />
+                  )}
                 </div>
               </div>
             )}
@@ -441,7 +590,6 @@ export default function Home() {
             )}
             {job?.status === "done" && job.video && (
               <div className="space-y-3">
-                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                 <video src={`${API}/api/jobs/${job.id}/video`} controls className="mx-auto max-h-[68vh] w-full rounded-xl bg-black" />
                 <div className="flex flex-wrap gap-2 text-sm">
                   <a href={`${API}/api/jobs/${job.id}/video`} download className="rounded-lg bg-white/10 px-3 py-2 hover:bg-white/20">⬇ 영상</a>
@@ -451,6 +599,17 @@ export default function Home() {
               </div>
             )}
           </Card>
+
+          {job?.status === "done" && (
+            <Card title="🚀 유튜브 발행">
+              <PublishPanel
+                jobId={job.id}
+                llmKeySet={!!settings?.llm_key_set}
+                onToast={toast}
+                onRefresh={refreshRecent}
+              />
+            </Card>
+          )}
 
           <Card title="최근 작업">
             {recent.length === 0 ? (
@@ -482,185 +641,6 @@ export default function Home() {
           </Card>
         </section>
       </main>
-
-      <style>{`@keyframes loading{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}`}</style>
-    </div>
-  );
-}
-
-const inputCls =
-  "w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none transition focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40";
-
-function Card({ title, step, children }: { title: string; step?: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-xl shadow-black/20 backdrop-blur">
-      <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-200">
-        {step && <span className="text-neutral-500">{step}</span>}
-        {title}
-      </h2>
-      {children}
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block space-y-1.5">
-      <span className="text-xs font-medium text-neutral-400">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <button onClick={() => onChange(!checked)} className="flex w-full items-center gap-3 text-left text-sm text-neutral-300">
-      <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${checked ? "bg-indigo-500" : "bg-white/15"}`}>
-        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? "left-[18px]" : "left-0.5"}`} />
-      </span>
-      {label}
-    </button>
-  );
-}
-
-function Spinner() {
-  return <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-indigo-400" />;
-}
-
-function Dropzone({
-  label,
-  hint,
-  accept,
-  icon,
-  multiple = false,
-  files,
-  onFiles,
-}: {
-  label: string;
-  hint: string;
-  accept: string;
-  icon: string;
-  multiple?: boolean;
-  files: File[];
-  onFiles: (f: File[]) => void;
-}) {
-  const [over, setOver] = useState(false);
-  const ref = useRef<HTMLInputElement>(null);
-  return (
-    <div className="space-y-1.5">
-      <span className="text-xs font-medium text-neutral-400">{label}</span>
-      <div
-        onClick={() => ref.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setOver(false);
-          const fs = Array.from(e.dataTransfer.files);
-          if (fs.length) onFiles(multiple ? fs : [fs[0]]);
-        }}
-        className={`cursor-pointer rounded-xl border-2 border-dashed p-4 text-center transition ${
-          over ? "border-indigo-400 bg-indigo-500/10" : "border-white/15 hover:border-white/30 hover:bg-white/5"
-        }`}
-      >
-        <input
-          ref={ref}
-          type="file"
-          accept={accept}
-          multiple={multiple}
-          className="hidden"
-          onChange={(e) => onFiles(Array.from(e.target.files ?? []))}
-        />
-        {files.length === 0 ? (
-          <p className="text-sm text-neutral-400">
-            <span className="mr-1">{icon}</span>
-            <span className="text-neutral-300">{hint}</span>
-          </p>
-        ) : (
-          <p className="truncate text-sm text-neutral-200">
-            {icon} {files.length === 1 ? files[0].name : `${files.length}개 선택됨`}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SettingsModal({
-  settings,
-  onClose,
-  onSave,
-}: {
-  settings: Settings | null;
-  onClose: () => void;
-  onSave: (patch: Record<string, string>) => Promise<void>;
-}) {
-  const [llmProvider, setLlmProvider] = useState(settings?.llm_provider ?? "claude");
-  const [llmModel, setLlmModel] = useState(settings?.llm_model ?? "claude-sonnet-4-6");
-  const [llmKey, setLlmKey] = useState("");
-  const [videoProvider, setVideoProvider] = useState(settings?.video_provider ?? "kaiber");
-  const [videoKey, setVideoKey] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  async function save() {
-    setSaving(true);
-    const patch: Record<string, string> = {
-      llm_provider: llmProvider,
-      llm_model: llmModel,
-      video_provider: videoProvider,
-    };
-    if (llmKey.trim()) patch.llm_api_key = llmKey.trim();
-    if (videoKey.trim()) patch.video_api_key = videoKey.trim();
-    await onSave(patch);
-    setLlmKey("");
-    setVideoKey("");
-    setSaving(false);
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg space-y-5 rounded-2xl border border-white/10 bg-neutral-900 p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">⚙️ API 키 설정 (BYOK)</h2>
-          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-200">✕</button>
-        </div>
-        <p className="text-xs text-neutral-400">키는 백엔드 로컬에만 저장되고 화면엔 다시 표시되지 않습니다(설정 여부만 표시). provider는 언제든 교체 가능.</p>
-
-        <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
-          <h3 className="text-sm font-medium">AI 편집 (LLM)</h3>
-          <Field label="Provider">
-            <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} className={inputCls}>
-              <option value="claude">Claude (Anthropic)</option>
-            </select>
-          </Field>
-          <Field label="모델">
-            <input value={llmModel} onChange={(e) => setLlmModel(e.target.value)} className={inputCls} />
-          </Field>
-          <Field label={`API 키 ${settings?.llm_key_set ? "(설정됨 ✓ — 바꿀 때만 입력)" : "(미설정)"}`}>
-            <input type="password" value={llmKey} onChange={(e) => setLlmKey(e.target.value)} placeholder="sk-ant-..." className={inputCls} />
-          </Field>
-        </div>
-
-        <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
-          <h3 className="text-sm font-medium">AI 영상 생성 (배경)</h3>
-          <Field label="Provider">
-            <select value={videoProvider} onChange={(e) => setVideoProvider(e.target.value)} className={inputCls}>
-              <option value="kaiber">Kaiber</option>
-              <option value="higgsfield">Higgsfield</option>
-            </select>
-          </Field>
-          <Field label={`API 키 ${settings?.video_key_set ? "(설정됨 ✓)" : "(미설정)"}`}>
-            <input type="password" value={videoKey} onChange={(e) => setVideoKey(e.target.value)} placeholder="키 입력" className={inputCls} />
-          </Field>
-        </div>
-
-        <div className="flex justify-end">
-          <button onClick={save} disabled={saving} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-400 disabled:opacity-50">
-            {saving ? "저장 중…" : "저장"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
