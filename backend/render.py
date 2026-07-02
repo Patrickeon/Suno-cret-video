@@ -33,6 +33,8 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--title", opts["title"]]
     if opts.get("artist"):
         cmd += ["--artist", opts["artist"]]
+    if opts.get("logo"):
+        cmd += ["--logo", opts["logo"]]
     if opts.get("watermark"):
         cmd += ["--watermark", opts["watermark"]]
     if opts.get("align") == "auto":
@@ -69,6 +71,8 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--sub-size", str(opts["sub_size"])]
     if opts.get("sub_pos") and opts["sub_pos"] != "bottom":
         cmd += ["--sub-pos", str(opts["sub_pos"])]
+    if opts.get("preview"):
+        cmd += ["--preview-secs", str(int(opts.get("preview_secs", 8)))]
 
     return cmd, out
 

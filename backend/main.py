@@ -185,6 +185,7 @@ async def create_render(
     audio: UploadFile = File(...),
     lyrics_file: Optional[UploadFile] = File(None),
     bg: List[UploadFile] = File(default=[]),
+    logo: Optional[UploadFile] = File(None),
     lyrics_text: str = Form(""),
     viz: str = Form("waves"),
     shorts: bool = Form(False),
@@ -208,6 +209,7 @@ async def create_render(
     sub_color: str = Form("FFFFFF"),
     sub_size: float = Form(1.0),
     sub_pos: str = Form("bottom"),
+    preview: bool = Form(False),
 ):
     # 입력 검증
     try:
@@ -217,6 +219,8 @@ async def create_render(
         for b in bg or []:
             if b is not None and b.filename:
                 _check_ext(b.filename, IMAGE_EXTS, "배경 이미지")
+        if logo is not None and logo.filename:
+            _check_ext(logo.filename, IMAGE_EXTS, "로고")
     except UploadError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     if not _clip_start_ok(clip_start):
@@ -248,6 +252,11 @@ async def create_render(
                 p = os.path.join(d, f"bg{i}_{b.filename}")
                 _save_upload(b, p, MAX_IMAGE_MB)
                 bg_paths.append(p)
+
+        logo_path = None
+        if logo is not None and logo.filename:
+            logo_path = os.path.join(d, "logo_" + logo.filename)
+            _save_upload(logo, logo_path, MAX_IMAGE_MB)
     except UploadError as e:
         jobs.update(jid, status="error", error=str(e))
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -275,6 +284,8 @@ async def create_render(
         "sub_color": sub_color,
         "sub_size": sub_size,
         "sub_pos": sub_pos,
+        "logo": logo_path,
+        "preview": preview,
     }
 
     # 재렌더(AI 편집) 때 같은 자산을 재사용하도록 경로 보관
@@ -313,7 +324,7 @@ def agent_edit(body: AgentBody):
         )
 
     cfg = settings.get_raw()
-    cur_opts = job.get("opts") or {}
+    cur_opts = {k: v for k, v in (job.get("opts") or {}).items() if k != "preview"}
     history = [{"role": m.role, "content": m.content} for m in body.history]
     try:
         reply, patch = agent.edit_video(
@@ -437,7 +448,7 @@ def batch(body: BatchBody):
     assets = job.get("assets")
     if not assets:
         return JSONResponse({"error": "이 프로젝트에는 자산이 없습니다."}, status_code=400)
-    base = job.get("opts") or {}
+    base = {k: v for k, v in (job.get("opts") or {}).items() if k != "preview"}
     title = job.get("title", "")
 
     # 롱폼 (전체, 세로 아님)
@@ -465,6 +476,37 @@ def batch(body: BatchBody):
 
     return {"longform": lf_jid, "shorts": short_jids,
             "detected": len(short_jids)}
+
+
+class TranslateBody(BaseModel):
+    text: str
+    target: str = "영어"
+    bilingual: bool = True  # True면 원문||번역, False면 번역만
+
+
+@app.post("/api/translate")
+def translate(body: TranslateBody):
+    lines = [ln.strip() for ln in body.text.splitlines() if ln.strip()]
+    if not lines:
+        return JSONResponse({"error": "번역할 가사가 없습니다."}, status_code=400)
+    llm_key = settings.get_key("llm_api_key")
+    if not llm_key:
+        return JSONResponse(
+            {"error": "AI 키가 없습니다. ⚙️ 설정에서 Claude API 키를 입력하세요."},
+            status_code=400,
+        )
+    cfg = settings.get_raw()
+    try:
+        trans = agent.translate_lyrics(
+            lines, target=body.target, provider_name=cfg["llm_provider"],
+            model=cfg["llm_model"], api_key=llm_key)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"번역 오류: {e}"}, status_code=500)
+    if body.bilingual:
+        merged = [f"{o}||{t}" if t else o for o, t in zip(lines, trans)]
+    else:
+        merged = trans
+    return {"text": "\n".join(merged), "lines": trans}
 
 
 @app.get("/api/youtube/status")

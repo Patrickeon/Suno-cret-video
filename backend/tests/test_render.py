@@ -87,6 +87,12 @@ def test_subtitle_style_options():
     assert cmd[cmd.index("--sub-pos") + 1] == "top"
 
 
+def test_preview_and_logo_flags():
+    cmd = _build({"preview": True, "logo": "/j/logo.png"})
+    assert "--preview-secs" in cmd
+    assert cmd[cmd.index("--logo") + 1] == "/j/logo.png"
+
+
 def test_master_precedence_over_normalize():
     cmd = _build({"master": True, "normalize": True, "karaoke": True})
     assert "--master" in cmd

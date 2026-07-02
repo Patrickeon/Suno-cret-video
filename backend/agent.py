@@ -172,6 +172,49 @@ def generate_metadata(title, artist, lyrics, provider_name="claude",
     return {}
 
 
+# ─────────────────────────────────────────────────────────────
+# 가사 번역 — 줄 단위, 원문과 1:1 대응
+# ─────────────────────────────────────────────────────────────
+
+TRANSLATE_TOOL = {
+    "name": "set_translation",
+    "description": "가사를 줄 단위로 번역한다. 입력 줄 수와 정확히 같은 개수를 반환할 것.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "lines": {"type": "array", "items": {"type": "string"},
+                      "description": "각 원문 줄의 번역 (원문과 같은 순서·개수)"},
+        },
+        "required": ["lines"],
+    },
+}
+
+
+def translate_lyrics(lines, target="영어", provider_name="claude", model=None, api_key=None):
+    """가사 줄 리스트 -> 번역 줄 리스트(같은 길이). 실패 시 원문 반환."""
+    kw = {}
+    if model:
+        kw["model"] = model
+    if api_key:
+        kw["api_key"] = api_key
+    provider = get_provider(provider_name, **kw)
+    numbered = "\n".join(f"{i+1}. {ln}" for i, ln in enumerate(lines))
+    system = (f"당신은 노래 가사 번역가입니다. 아래 가사를 {target}로 자연스럽게 번역하되,"
+              " 각 줄을 1:1로 대응시키고 set_translation 도구로 정확히 같은 개수의 줄을 반환하세요."
+              " 의미와 감성을 살리되 자막용으로 간결하게.")
+    resp = provider.chat(system, [{"role": "user", "content": numbered}],
+                         tools=[TRANSLATE_TOOL])
+    for b in resp.content:
+        if b.type == "tool_use" and b.name == "set_translation":
+            out = list((b.input or {}).get("lines") or [])
+            if out:
+                # 길이 보정
+                if len(out) < len(lines):
+                    out += [""] * (len(lines) - len(out))
+                return out[:len(lines)]
+    return list(lines)
+
+
 def _blocks_to_dicts(content):
     out = []
     for b in content:

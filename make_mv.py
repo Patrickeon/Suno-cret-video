@@ -315,7 +315,9 @@ def write_ass(cues, path, lay, font=SUB_FONT, color="FFFFFF", size_mult=1.0,
         for start, end, text in cues:
             if end <= start:
                 end = start + 0.5
-            body = karaoke_text(text, end - start) if karaoke else ass_escape(text)
+            # '||' 는 자막 내 줄바꿈(이중 자막: 원문||번역)으로 처리
+            body = (karaoke_text(text, end - start) if karaoke
+                    else ass_escape(text).replace("||", "\\N"))
             f.write(
                 f"Dialogue: 0,{fmt_ass_time(start)},{fmt_ass_time(end)},"
                 f"Lyric,,0,0,0,,{body}\n"
@@ -427,7 +429,7 @@ def write_textfile(text, path):
 def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            bg_color="0x0a0a14", duration=None, kenburns=True,
            clip_start=None, clip_len=None, watermark=None, logo=None,
-           video_bg=None, crf=20, scale=1.0,
+           video_bg=None, crf=20, scale=1.0, preset="medium",
            normalize=False, master=False, fade_in=0.0, fade_out=0.0,
            vignette=False, grain=False):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
@@ -531,7 +533,7 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         "-filter_complex", full_filter,
         "-map", final_v,
         "-map", audio_map,
-        "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
+        "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
         "-profile:v", "high", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "320k", "-ar", "48000",
         "-movflags", "+faststart",
@@ -633,11 +635,20 @@ def main():
     ap.add_argument("--fade-out", type=float, default=0.0, help="아웃트로 페이드(초, 영상+오디오)")
     ap.add_argument("--vignette", action="store_true", help="비네트(가장자리 어둡게)")
     ap.add_argument("--film-grain", action="store_true", help="필름 그레인(노이즈) 질감")
+    ap.add_argument("--preview-secs", type=int, default=0,
+                    help=">0 이면 앞 N초만 저화질·초고속으로 렌더(미리보기)")
     args = ap.parse_args()
 
     global FPS
     FPS = args.fps
     scale = {"1080": 1.0, "1440": 4 / 3, "2160": 2.0}[args.res]
+    crf = 20
+    preset = "medium"
+    if args.preview_secs > 0:
+        # 미리보기: 720p 상당 + 초고속 인코딩 + crf 높임
+        scale = min(scale, 720 / 1080)
+        preset = "ultrafast"
+        crf = 30
 
     full_dur = probe_duration(args.audio)
     print(f"[info] 곡 길이: {full_dur:.1f}s")
@@ -653,6 +664,8 @@ def main():
     if clip_start is not None:
         clip_len = min(args.clip_len, full_dur - clip_start)
     render_dur = clip_len if clip_len is not None else full_dur
+    if args.preview_secs > 0:
+        render_dur = min(render_dur, float(args.preview_secs))
 
     # 가사 -> cues (전체 곡 기준)
     cues = []
@@ -696,13 +709,13 @@ def main():
            duration=render_dur, kenburns=args.kenburns,
            clip_start=clip_start, clip_len=clip_len,
            watermark=args.watermark, logo=args.logo,
-           video_bg=args.video_bg, scale=scale,
+           video_bg=args.video_bg, scale=scale, preset=preset, crf=crf,
            normalize=args.normalize, master=args.master,
            fade_in=args.fade_in, fade_out=args.fade_out,
            vignette=args.vignette, grain=args.film_grain)
 
-    # 썸네일
-    if args.title:
+    # 썸네일 (미리보기에선 생략)
+    if args.title and args.preview_secs == 0:
         thumb = args.thumb_out or (os.path.splitext(args.out)[0] + "_thumb.jpg")
         bg0 = args.bg[0] if args.bg else None
         make_thumbnail(thumb, args.title, args.artist, bg=bg0, bg_color=args.bg_color)

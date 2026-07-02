@@ -72,6 +72,24 @@ def test_generate_metadata(monkeypatch):
     assert "발라드" in out["tags"]
 
 
+def test_translate_lyrics(monkeypatch):
+    tool = _Blk(type="tool_use", id="t", name="set_translation",
+                input={"lines": ["Starlight", "Your voice"]})
+    fake = _FakeProvider([_Resp([tool])])
+    monkeypatch.setattr(agent, "get_provider", lambda *a, **k: fake)
+    out = agent.translate_lyrics(["별빛", "너의 목소리"], target="영어", api_key="x")
+    assert out == ["Starlight", "Your voice"]
+
+
+def test_translate_lyrics_length_padded(monkeypatch):
+    # 번역 줄이 부족하면 원문 길이에 맞춰 패딩
+    tool = _Blk(type="tool_use", id="t", name="set_translation", input={"lines": ["A"]})
+    fake = _FakeProvider([_Resp([tool])])
+    monkeypatch.setattr(agent, "get_provider", lambda *a, **k: fake)
+    out = agent.translate_lyrics(["가", "나", "다"], api_key="x")
+    assert len(out) == 3
+
+
 def test_generate_metadata_no_tool_returns_empty(monkeypatch):
     fake = _FakeProvider([_Resp([_Blk(type="text", text="음...")])])
     monkeypatch.setattr(agent, "get_provider", lambda *a, **k: fake)

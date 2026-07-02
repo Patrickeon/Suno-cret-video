@@ -5,6 +5,7 @@ import { Card, Dropzone, Field, Spinner, Toggle } from "./components/ui";
 import { SettingsModal } from "./components/SettingsModal";
 import { HelpModal } from "./components/HelpModal";
 import { PublishPanel } from "./components/PublishPanel";
+import { LyricSyncModal } from "./components/LyricSyncModal";
 import {
   API,
   BG_PRESETS,
@@ -29,6 +30,11 @@ export default function Home() {
   const [lyricsFile, setLyricsFile] = useState<File | null>(null);
   const [bgFiles, setBgFiles] = useState<File[]>([]);
   const [bgPick, setBgPick] = useState("");
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [albumFiles, setAlbumFiles] = useState<File[]>([]);
+  const [albumBusy, setAlbumBusy] = useState(false);
+  const [translateBusy, setTranslateBusy] = useState(false);
+  const [translateTarget, setTranslateTarget] = useState("영어");
 
   // 옵션
   const [viz, setViz] = useState("waves");
@@ -76,6 +82,7 @@ export default function Home() {
   // 설정 / 도움말 / 테마 / 토스트
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showSync, setShowSync] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -218,7 +225,7 @@ export default function Home() {
     }, 1500);
   }
 
-  async function generate() {
+  async function generate(preview = false) {
     if (!audio) {
       toast("음원 파일을 선택하세요.", "error");
       return;
@@ -231,6 +238,8 @@ export default function Home() {
       if (lyricsFile) fd.append("lyrics_file", lyricsFile);
       if (lyricsText.trim()) fd.append("lyrics_text", lyricsText);
       bgFiles.forEach((f) => fd.append("bg", f));
+      if (logoFile) fd.append("logo", logoFile);
+      fd.append("preview", String(preview));
       fd.append("viz", viz);
       fd.append("shorts", String(shorts));
       fd.append("clip_start", clipStart);
@@ -259,11 +268,68 @@ export default function Home() {
       if (!r.ok) throw new Error(data.error || `서버 오류 (${r.status})`);
       setJob({ id: data.job_id, status: "queued", progress: 0, error: null, log: "", video: false, thumb: false });
       poll(data.job_id);
-      toast("렌더를 시작했어요.", "info");
+      toast(preview ? "⚡ 미리보기 렌더 시작 (앞부분·저화질)" : "렌더를 시작했어요.", "info");
     } catch (e) {
       toast(e instanceof Error ? e.message : "요청 실패", "error");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function albumGenerate() {
+    if (!albumFiles.length) {
+      toast("앨범에 넣을 음원들을 선택하세요.", "error");
+      return;
+    }
+    setAlbumBusy(true);
+    toast(`${albumFiles.length}곡 일괄 렌더를 큐에 넣는 중…`, "info");
+    for (const f of albumFiles) {
+      const fd = new FormData();
+      fd.append("audio", f);
+      bgFiles.forEach((b) => fd.append("bg", b));
+      if (logoFile) fd.append("logo", logoFile);
+      fd.append("viz", viz);
+      fd.append("res", res);
+      fd.append("fps", String(fps));
+      fd.append("kenburns", String(kenburns));
+      fd.append("bg_color", bgColor);
+      fd.append("normalize", String(normalize));
+      fd.append("master", String(master));
+      fd.append("vignette", String(vignette));
+      fd.append("film_grain", String(filmGrain));
+      fd.append("watermark", watermark);
+      fd.append("title", f.name.replace(/\.[^.]+$/, ""));
+      try {
+        await fetch(`${API}/api/render`, { method: "POST", body: fd });
+      } catch {
+        /* 개별 실패 무시 */
+      }
+    }
+    refreshRecent();
+    setAlbumBusy(false);
+    toast("앨범 일괄 렌더가 시작됐어요. ‘최근 작업’에서 확인하세요.", "success");
+  }
+
+  async function translateLyrics() {
+    if (!lyricsText.trim()) {
+      toast("번역할 가사를 먼저 입력하세요.", "error");
+      return;
+    }
+    setTranslateBusy(true);
+    try {
+      const r = await fetch(`${API}/api/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: lyricsText, target: translateTarget, bilingual: true }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || `오류 (${r.status})`);
+      setLyricsText(data.text);
+      toast("이중 자막(원문+번역)으로 바꿨어요. ‘||’ 는 줄바꿈으로 렌더됩니다.", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "번역 실패", "error");
+    } finally {
+      setTranslateBusy(false);
     }
   }
 
@@ -447,6 +513,19 @@ export default function Home() {
         <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onSave={saveSettings} />
       )}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showSync && audio && (
+        <LyricSyncModal
+          audio={audio}
+          lyrics={lyricsText}
+          onClose={() => setShowSync(false)}
+          onApply={(lrc) => {
+            setLyricsFile(new File([lrc], "synced.lrc", { type: "text/plain" }));
+            setLyricsText("");
+            setShowSync(false);
+            toast("싱크된 LRC를 가사 파일로 적용했어요.", "success");
+          }}
+        />
+      )}
 
       <main className="mx-auto grid max-w-6xl gap-7 px-6 py-8 lg:grid-cols-2">
         {/* 왼쪽 */}
@@ -488,6 +567,36 @@ export default function Home() {
                     className={`${inputCls} resize-y`}
                   />
                 </Field>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--text-faint)]">🌏 번역</span>
+                  <select
+                    value={translateTarget}
+                    onChange={(e) => setTranslateTarget(e.target.value)}
+                    className={`${inputCls} w-28`}
+                  >
+                    <option value="영어">영어</option>
+                    <option value="일본어">일본어</option>
+                    <option value="중국어">중국어</option>
+                    <option value="스페인어">스페인어</option>
+                  </select>
+                  <button
+                    onClick={translateLyrics}
+                    disabled={translateBusy}
+                    className="rounded-lg bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-3)] disabled:opacity-50"
+                  >
+                    {translateBusy ? "번역 중…" : "이중 자막 만들기"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!audio) return toast("음원을 먼저 올리세요.", "error");
+                      if (!lyricsText.trim()) return toast("가사를 먼저 입력하세요.", "error");
+                      setShowSync(true);
+                    }}
+                    className="rounded-lg bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-3)]"
+                  >
+                    🎯 싱크 맞추기
+                  </button>
+                </div>
                 <Dropzone
                   label="또는 가사 파일 (.lrc / .txt)"
                   hint=".lrc 면 정확한 싱크"
@@ -615,6 +724,14 @@ export default function Home() {
                 <Field label="워터마크 (우하단)">
                   <input value={watermark} onChange={(e) => setWatermark(e.target.value)} placeholder="@내채널" className={inputCls} />
                 </Field>
+                <Dropzone
+                  label="로고 (우하단 · 워터마크보다 우선 · 채널 브랜딩)"
+                  hint="png 권장 (투명 배경)"
+                  accept="image/*"
+                  icon="🏷️"
+                  files={logoFile ? [logoFile] : []}
+                  onFiles={(fs) => setLogoFile(fs[0] ?? null)}
+                />
               </Card>
 
               <Card title="4. 품질 / 마감 (유튜브)" step="④">
@@ -654,13 +771,46 @@ export default function Home() {
                 </div>
               </Card>
 
-              <button
-                onClick={generate}
-                disabled={submitting || busy}
-                className="w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-3.5 font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110 disabled:opacity-50"
-              >
-                {busy ? "렌더링 중…" : "🎬 뮤직비디오 생성"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => generate(true)}
+                  disabled={submitting || busy}
+                  className="shrink-0 rounded-xl bg-[var(--surface-2)] px-4 py-3.5 text-sm font-medium text-[var(--text)] ring-1 ring-[var(--border)] transition hover:bg-[var(--surface-3)] disabled:opacity-50"
+                  title="앞부분만 저화질로 빠르게 확인"
+                >
+                  ⚡ 미리보기
+                </button>
+                <button
+                  onClick={() => generate(false)}
+                  disabled={submitting || busy}
+                  className="w-full rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-3.5 font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110 disabled:opacity-50"
+                >
+                  {busy ? "렌더링 중…" : "🎬 뮤직비디오 생성"}
+                </button>
+              </div>
+
+              <Card title="🎵 앨범 일괄 (여러 곡, 같은 스타일)" step="＋">
+                <p className="text-[11px] text-[var(--text-faint)]">
+                  현재 배경·비주얼·품질·워터마크·로고 설정을 그대로 써서 여러 곡을 한 번에 렌더합니다.
+                  (제목은 파일명, 가사는 생략)
+                </p>
+                <Dropzone
+                  label="음원 여러 개"
+                  hint="mp3 · wav · flac 여러 개 선택"
+                  accept="audio/*"
+                  icon="🎶"
+                  multiple
+                  files={albumFiles}
+                  onFiles={setAlbumFiles}
+                />
+                <button
+                  onClick={albumGenerate}
+                  disabled={albumBusy || albumFiles.length === 0}
+                  className="w-full rounded-xl bg-[var(--surface-2)] px-4 py-3 text-sm font-medium text-[var(--text)] ring-1 ring-[var(--border)] transition hover:bg-[var(--surface-3)] disabled:opacity-50"
+                >
+                  {albumBusy ? "큐에 넣는 중…" : `📀 ${albumFiles.length || ""}곡 일괄 생성`}
+                </button>
+              </Card>
             </>
           ) : (
             <Card title="AI 편집 ✨" step="🤖">
