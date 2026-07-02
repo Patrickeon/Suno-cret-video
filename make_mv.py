@@ -216,8 +216,9 @@ def slice_cues_for_clip(cues, start, length):
 
 # ---------- 강제 정렬 (stable-ts, 소프트 임포트) ----------
 
-def align_with_stable_ts(audio, lyrics_text, model_name="base"):
-    """알려진 가사 텍스트를 오디오에 강제 정렬 -> [(start, end, text), ...] (줄 단위)."""
+def align_with_stable_ts(audio, lyrics_text, model_name="base", language="ko"):
+    """알려진 가사 텍스트를 오디오에 강제 정렬 -> [(start, end, text), ...] (줄 단위).
+    최신 stable-ts 는 align 에 명시적 language 를 요구한다(기본 한국어)."""
     try:
         import stable_whisper  # noqa
     except ImportError:
@@ -228,7 +229,11 @@ def align_with_stable_ts(audio, lyrics_text, model_name="base"):
         )
     print(f"[align] stable-ts 모델 로드: {model_name} (CPU면 시간이 걸립니다)")
     model = stable_whisper.load_model(model_name)
-    result = model.align(audio, lyrics_text, language=None)
+    # original_split: 입력 텍스트의 줄바꿈을 그대로 자막 구간 경계로 유지
+    try:
+        result = model.align(audio, lyrics_text, language=language, original_split=True)
+    except TypeError:
+        result = model.align(audio, lyrics_text, language=language)
     cues = []
     for seg in result.segments:
         text = seg.text.strip()
@@ -601,6 +606,7 @@ def main():
     ap.add_argument("--align", choices=["none", "auto"], default="none",
                     help="auto: stable-ts 로 가사 강제정렬")
     ap.add_argument("--align-model", default="base", help="정렬 모델 (tiny/base/small/medium)")
+    ap.add_argument("--align-lang", default="ko", help="정렬 언어 코드 (기본 ko)")
     ap.add_argument("--intro", type=float, default=0.0, help="txt 균등분배: 첫 가사 전(초)")
     ap.add_argument("--outro", type=float, default=0.0, help="txt 균등분배: 끝 여백(초)")
     ap.add_argument("--lrc-out", help="초안 LRC 만 생성하고 종료")
@@ -674,7 +680,8 @@ def main():
         if args.align == "auto":
             lines = read_txt_lines(args.lyrics) if ext != ".lrc" else \
                 [t for _, t in parse_lrc(args.lyrics)]
-            cues = align_with_stable_ts(args.audio, "\n".join(lines), args.align_model)
+            cues = align_with_stable_ts(args.audio, "\n".join(lines), args.align_model,
+                                        language=args.align_lang)
             print(f"[info] 강제정렬 {len(cues)}줄")
         elif ext == ".lrc":
             cues = lrc_to_cues(parse_lrc(args.lyrics), full_dur)
