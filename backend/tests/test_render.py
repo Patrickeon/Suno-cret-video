@@ -93,6 +93,15 @@ def test_preview_and_logo_flags():
     assert cmd[cmd.index("--logo") + 1] == "/j/logo.png"
 
 
+def test_phase1_flags():
+    cmd = _build({"sub_glow": True, "intro_card": True, "interlude_note": True,
+                  "font": "NanumGothic"})
+    assert "--sub-glow" in cmd
+    assert "--intro-card" in cmd
+    assert "--interlude-note" in cmd
+    assert cmd[cmd.index("--font") + 1] == "NanumGothic"
+
+
 def test_master_precedence_over_normalize():
     cmd = _build({"master": True, "normalize": True, "karaoke": True})
     assert "--master" in cmd

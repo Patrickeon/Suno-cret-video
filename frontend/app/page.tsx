@@ -52,6 +52,11 @@ export default function Home() {
   const [subColor, setSubColor] = useState("FFFFFF");
   const [subSize, setSubSize] = useState(1.0);
   const [subPos, setSubPos] = useState("bottom");
+  const [subGlow, setSubGlow] = useState(false);
+  const [font, setFont] = useState("");
+  const [fonts, setFonts] = useState<{ label: string; family: string }[]>([]);
+  const [introCard, setIntroCard] = useState(false);
+  const [interludeNote, setInterludeNote] = useState(false);
 
   // 품질 / 마감 (유튜브)
   const [res, setRes] = useState("1080");
@@ -128,6 +133,7 @@ export default function Home() {
 
   useEffect(() => {
     fetch(`${API}/api/settings`).then((r) => r.json()).then(setSettings).catch(() => {});
+    fetch(`${API}/api/fonts`).then((r) => r.json()).then((d) => setFonts(d.fonts ?? [])).catch(() => {});
     refreshRecent();
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -262,6 +268,10 @@ export default function Home() {
       fd.append("sub_color", subColor);
       fd.append("sub_size", String(subSize));
       fd.append("sub_pos", subPos);
+      fd.append("sub_glow", String(subGlow));
+      fd.append("intro_card", String(introCard));
+      fd.append("interlude_note", String(interludeNote));
+      if (font) fd.append("font", font);
 
       const r = await fetch(`${API}/api/render`, { method: "POST", body: fd });
       const data = await r.json();
@@ -455,7 +465,7 @@ export default function Home() {
         ))}
       </div>
 
-      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--surface-2)] px-6 py-3.5 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 backdrop-blur-md sm:px-6 sm:py-3.5">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-lg shadow-lg">
@@ -463,7 +473,7 @@ export default function Home() {
             </span>
             <div>
               <h1 className="text-base font-semibold leading-tight tracking-tight">Suno MV Studio</h1>
-              <p className="text-[11px] text-[var(--text-dim)]">음원 + 가사 → AI 뮤직비디오</p>
+              <p className="hidden text-[11px] text-[var(--text-dim)] sm:block">음원 + 가사 → AI 뮤직비디오</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -527,7 +537,7 @@ export default function Home() {
         />
       )}
 
-      <main className="mx-auto grid max-w-6xl gap-7 px-6 py-8 lg:grid-cols-2">
+      <main className="mx-auto grid max-w-6xl gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:grid-cols-2">
         {/* 왼쪽 */}
         <section className="space-y-6">
           {mode === "local" ? (
@@ -632,6 +642,15 @@ export default function Home() {
                     </select>
                   </Field>
                 </div>
+                <Field label="자막 폰트">
+                  <select value={font} onChange={(e) => setFont(e.target.value)} className={inputCls}>
+                    <option value="">기본 (맑은 고딕)</option>
+                    {fonts.map((f) => (
+                      <option key={f.family} value={f.family}>{f.label}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Toggle checked={subGlow} onChange={setSubGlow} label="✨ 자막 글로우 (발광)" />
               </Card>
 
               <Card title="2. 배경 / 비주얼" step="②">
@@ -658,7 +677,7 @@ export default function Home() {
                 </div>
                 <div className="space-y-1.5">
                   <span className="text-xs font-medium text-[var(--text-dim)]">기본 배경 (그라데이션)</span>
-                  <div className="grid grid-cols-6 gap-2">
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
                     {BG_PRESETS.map((b) => (
                       <button
                         key={b.id}
@@ -769,6 +788,8 @@ export default function Home() {
                   <Toggle checked={vignette} onChange={setVignette} label="비네트" />
                   <Toggle checked={filmGrain} onChange={setFilmGrain} label="필름 그레인" />
                 </div>
+                <Toggle checked={introCard} onChange={setIntroCard} label="🎬 인트로 타이틀 카드 (제목/아티스트 페이드인)" />
+                <Toggle checked={interludeNote} onChange={setInterludeNote} label="🎵 간주 구간에 ♪ 표시" />
               </Card>
 
               <div className="flex gap-2">

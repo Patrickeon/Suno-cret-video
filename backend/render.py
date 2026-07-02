@@ -14,6 +14,8 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
 
     if lyrics:
         cmd += ["--lyrics", lyrics]
+    if opts.get("font"):
+        cmd += ["--font", str(opts["font"])]
     if opts.get("video_bg"):
         cmd += ["--video-bg", opts["video_bg"]]
     elif bg_list:
@@ -71,6 +73,12 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--sub-size", str(opts["sub_size"])]
     if opts.get("sub_pos") and opts["sub_pos"] != "bottom":
         cmd += ["--sub-pos", str(opts["sub_pos"])]
+    if opts.get("sub_glow"):
+        cmd += ["--sub-glow"]
+    if opts.get("intro_card"):
+        cmd += ["--intro-card"]
+    if opts.get("interlude_note"):
+        cmd += ["--interlude-note"]
     if opts.get("preview"):
         cmd += ["--preview-secs", str(int(opts.get("preview_secs", 8)))]
 

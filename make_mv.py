@@ -300,7 +300,7 @@ def karaoke_text(text, dur):
 
 
 def write_ass(cues, path, lay, font=SUB_FONT, color="FFFFFF", size_mult=1.0,
-              pos="bottom", karaoke=False):
+              pos="bottom", karaoke=False, glow=False):
     fontsize = max(1, int(round(lay["font_size"] * float(size_mult))))
     align = {"bottom": 2, "middle": 5, "top": 8}.get(pos, 2)
     if pos == "top":
@@ -323,6 +323,8 @@ def write_ass(cues, path, lay, font=SUB_FONT, color="FFFFFF", size_mult=1.0,
             # '||' 는 자막 내 줄바꿈(이중 자막: 원문||번역)으로 처리
             body = (karaoke_text(text, end - start) if karaoke
                     else ass_escape(text).replace("||", "\\N"))
+            if glow:
+                body = "{\\blur5}" + body  # 은은한 발광
             f.write(
                 f"Dialogue: 0,{fmt_ass_time(start)},{fmt_ass_time(end)},"
                 f"Lyric,,0,0,0,,{body}\n"
@@ -436,7 +438,8 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            clip_start=None, clip_len=None, watermark=None, logo=None,
            video_bg=None, crf=20, scale=1.0, preset="medium",
            normalize=False, master=False, fade_in=0.0, fade_out=0.0,
-           vignette=False, grain=False):
+           vignette=False, grain=False,
+           intro_card=False, ic_title="", ic_artist="", gaps=None):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
@@ -505,6 +508,33 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
             "shadowcolor=black@0.6:shadowx=2:shadowy=2[vout]"
         )
         cur = "[vout]"
+
+    # ---- 인트로 타이틀 카드 (시작 ~4초 페이드인) ----
+    if intro_card and ic_title:
+        a_expr = ("alpha='if(lt(t,0.6),t/0.6,if(lt(t,3.2),1,"
+                  "if(lt(t,4),(4-t)/0.8,0)))'")
+        write_textfile(ic_title, os.path.join(work_dir, "_ic_ttl.txt"))
+        parts.append(
+            f"{cur}drawtext={draw_font_spec()}:textfile=_ic_ttl.txt:fontcolor=white:"
+            f"fontsize={int(round(96*scale))}:x=(w-tw)/2:y=(h-th)/2-{int(round(20*scale))}:"
+            f"{a_expr}:shadowcolor=black@0.7:shadowx=3:shadowy=3[vic]")
+        cur = "[vic]"
+        if ic_artist:
+            write_textfile(ic_artist, os.path.join(work_dir, "_ic_art.txt"))
+            parts.append(
+                f"{cur}drawtext={draw_font_spec()}:textfile=_ic_art.txt:fontcolor=white@0.9:"
+                f"fontsize={int(round(46*scale))}:x=(w-tw)/2:y=(h-th)/2+{int(round(72*scale))}:"
+                f"{a_expr}:shadowcolor=black@0.7:shadowx=2:shadowy=2[vica]")
+            cur = "[vica]"
+
+    # ---- 간주(가사 없는 긴 구간)에 ♪ 표시 ----
+    if gaps:
+        enable = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in gaps)
+        parts.append(
+            f"{cur}drawtext={draw_font_spec()}:text='♪':fontcolor=white@0.45:"
+            f"fontsize={int(round(120*scale))}:x=(w-tw)/2:y=(h-th)/2:"
+            f"enable='{enable}'[vnote]")
+        cur = "[vnote]"
 
     # ---- 영상 피니셔 (분위기) : 비네트 -> 필름그레인 -> 페이드 ----
     if vignette:
@@ -615,6 +645,11 @@ def main():
     ap.add_argument("--sub-size", type=float, default=1.0, help="자막 크기 배율 (기본 1.0)")
     ap.add_argument("--sub-pos", choices=["bottom", "middle", "top"], default="bottom",
                     help="자막 세로 위치")
+    ap.add_argument("--sub-glow", action="store_true", help="자막 발광(blur) 효과")
+    ap.add_argument("--intro-card", action="store_true",
+                    help="시작 ~4초 제목/아티스트 페이드인 오프닝")
+    ap.add_argument("--interlude-note", action="store_true",
+                    help="가사 없는 긴 구간(간주)에 ♪ 표시")
     ap.add_argument("--keep-ass", action="store_true")
     # 쇼츠 / 클립
     ap.add_argument("--shorts", action="store_true", help="세로 9:16 (1080x1920)")
@@ -709,7 +744,21 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     ass_path = os.path.join(out_dir, "_sub.ass")
     write_ass(cues, ass_path, lay, font=args.font, color=args.sub_color,
-              size_mult=args.sub_size, pos=args.sub_pos, karaoke=args.karaoke)
+              size_mult=args.sub_size, pos=args.sub_pos, karaoke=args.karaoke,
+              glow=args.sub_glow)
+
+    # 간주(가사 없는 긴 구간) 검출 -> ♪ 표시용 구간
+    gaps = []
+    if args.interlude_note and cues:
+        GAP = 4.0
+        if not args.intro_card and cues[0][0] >= GAP:
+            gaps.append((0.5, cues[0][0] - 0.3))
+        for i in range(len(cues) - 1):
+            s, e = cues[i][1], cues[i + 1][0]
+            if e - s >= GAP:
+                gaps.append((s + 0.3, e - 0.3))
+        if render_dur - cues[-1][1] >= GAP:
+            gaps.append((cues[-1][1] + 0.3, render_dur - 0.3))
 
     render(args.audio, ass_path, args.out, lay,
            bg_list=args.bg, viz=args.viz, bg_color=args.bg_color,
@@ -719,7 +768,9 @@ def main():
            video_bg=args.video_bg, scale=scale, preset=preset, crf=crf,
            normalize=args.normalize, master=args.master,
            fade_in=args.fade_in, fade_out=args.fade_out,
-           vignette=args.vignette, grain=args.film_grain)
+           vignette=args.vignette, grain=args.film_grain,
+           intro_card=args.intro_card, ic_title=args.title or "",
+           ic_artist=args.artist or "", gaps=gaps)
 
     # 썸네일 (미리보기에선 생략)
     if args.title and args.preview_secs == 0:
@@ -728,7 +779,8 @@ def main():
         make_thumbnail(thumb, args.title, args.artist, bg=bg0, bg_color=args.bg_color)
 
     if not args.keep_ass:
-        for tmp in ("_sub.ass", "_wm.txt", "_ttl.txt", "_art.txt"):
+        for tmp in ("_sub.ass", "_wm.txt", "_ttl.txt", "_art.txt",
+                    "_ic_ttl.txt", "_ic_art.txt"):
             try:
                 os.remove(os.path.join(out_dir, tmp))
             except OSError:

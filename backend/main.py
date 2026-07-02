@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 import agent
+import fonts
 import highlights
 import jobs
 import render
@@ -170,6 +171,11 @@ class SettingsBody(BaseModel):
     video_api_key: str | None = None
 
 
+@app.get("/api/fonts")
+def get_fonts():
+    return {"fonts": fonts.list_fonts()}
+
+
 @app.get("/api/settings")
 def get_settings():
     return settings.get_public()
@@ -209,6 +215,10 @@ async def create_render(
     sub_color: str = Form("FFFFFF"),
     sub_size: float = Form(1.0),
     sub_pos: str = Form("bottom"),
+    sub_glow: bool = Form(False),
+    intro_card: bool = Form(False),
+    interlude_note: bool = Form(False),
+    font: str = Form(""),
     preview: bool = Form(False),
 ):
     # 입력 검증
@@ -284,6 +294,10 @@ async def create_render(
         "sub_color": sub_color,
         "sub_size": sub_size,
         "sub_pos": sub_pos,
+        "sub_glow": sub_glow,
+        "intro_card": intro_card,
+        "interlude_note": interlude_note,
+        "font": font,
         "logo": logo_path,
         "preview": preview,
     }
