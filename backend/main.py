@@ -116,20 +116,27 @@ def _do_render(jid, d, audio, lyrics, bg_paths, opts):
     if _cancelled(jid):
         return
     jobs.update(jid, status="running", opts=opts, progress=0, stage="")
-    try:
-        code, log, out = render.run_render(
-            d, audio, lyrics, bg_paths, opts,
-            on_progress=lambda p: jobs.update(jid, progress=p),
-            on_proc=lambda pr: _PROCS.__setitem__(jid, pr),
-        )
-    except Exception as e:  # noqa: BLE001
+    attempts = 2 if opts.get("auto_retry") else 1
+    code, log, out = 1, "", os.path.join(d, "out.mp4")
+    for attempt in range(attempts):
+        if attempt > 0:
+            jobs.update(jid, progress=0, stage=f"재시도 중… ({attempt + 1}/{attempts})")
+        try:
+            code, log, out = render.run_render(
+                d, audio, lyrics, bg_paths, opts,
+                on_progress=lambda p: jobs.update(jid, progress=p),
+                on_proc=lambda pr: _PROCS.__setitem__(jid, pr),
+            )
+        except Exception as e:  # noqa: BLE001
+            _PROCS.pop(jid, None)
+            if not _cancelled(jid):
+                jobs.update(jid, status="error", error=str(e))
+            return
         _PROCS.pop(jid, None)
-        if not _cancelled(jid):
-            jobs.update(jid, status="error", error=str(e))
-        return
-    _PROCS.pop(jid, None)
-    if _cancelled(jid):
-        return  # 취소된 잡은 결과를 덮어쓰지 않음
+        if _cancelled(jid):
+            return  # 취소된 잡은 결과를 덮어쓰지 않음
+        if code == 0 and os.path.exists(out):
+            break  # 성공 → 재시도 불필요
     try:
         log = log[-2000:]  # 잡 응답이 비대해지지 않게 끝부분만 보관
         thumb = os.path.splitext(out)[0] + "_thumb.jpg"
@@ -219,6 +226,7 @@ async def create_render(
     intro_card: bool = Form(False),
     interlude_note: bool = Form(False),
     font: str = Form(""),
+    auto_retry: bool = Form(True),
     preview: bool = Form(False),
 ):
     # 입력 검증
@@ -298,6 +306,7 @@ async def create_render(
         "intro_card": intro_card,
         "interlude_note": interlude_note,
         "font": font,
+        "auto_retry": auto_retry,
         "logo": logo_path,
         "preview": preview,
     }

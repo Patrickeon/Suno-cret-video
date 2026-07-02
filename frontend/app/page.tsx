@@ -57,6 +57,12 @@ export default function Home() {
   const [fonts, setFonts] = useState<{ label: string; family: string }[]>([]);
   const [introCard, setIntroCard] = useState(false);
   const [interludeNote, setInterludeNote] = useState(false);
+  const [autoRetry, setAutoRetry] = useState(true);
+  const [audioDur, setAudioDur] = useState(0);
+
+  // 히스토리 검색/필터
+  const [recentSearch, setRecentSearch] = useState("");
+  const [recentFilter, setRecentFilter] = useState("all");
 
   // 품질 / 마감 (유튜브)
   const [res, setRes] = useState("1080");
@@ -144,6 +150,14 @@ export default function Home() {
   const audioUrl = useMemo(() => (audio ? URL.createObjectURL(audio) : ""), [audio]);
   const bgUrls = useMemo(() => bgFiles.map((f) => URL.createObjectURL(f)), [bgFiles]);
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
+  // 오디오 길이 → 예상 렌더 시간 계산용
+  useEffect(() => {
+    if (!audioUrl) { setAudioDur(0); return; }
+    const a = new Audio(audioUrl);
+    const on = () => setAudioDur(a.duration || 0);
+    a.addEventListener("loadedmetadata", on);
+    return () => a.removeEventListener("loadedmetadata", on);
+  }, [audioUrl]);
   useEffect(() => () => { bgUrls.forEach((u) => URL.revokeObjectURL(u)); }, [bgUrls]);
 
   async function saveSettings(patch: Record<string, string>) {
@@ -272,6 +286,7 @@ export default function Home() {
       fd.append("intro_card", String(introCard));
       fd.append("interlude_note", String(interludeNote));
       if (font) fd.append("font", font);
+      fd.append("auto_retry", String(autoRetry));
 
       const r = await fetch(`${API}/api/render`, { method: "POST", body: fd });
       const data = await r.json();
@@ -443,6 +458,48 @@ export default function Home() {
     }
   }
 
+  // 예상 렌더 시간 (거친 추정: 곡 길이 × 해상도/옵션 배수)
+  const etaText = useMemo(() => {
+    if (!audioDur) return "";
+    let f = 0.55; // 1080p medium 기준 realtime 배수
+    if (res === "1440") f *= 2.0;
+    else if (res === "2160") f *= 4.0;
+    if (fps === 60) f *= 1.6;
+    if (master) f *= 1.3;
+    const sec = Math.max(5, Math.round(audioDur * f));
+    return sec >= 60 ? `~${Math.round(sec / 60)}분` : `~${sec}초`;
+  }, [audioDur, res, fps, master]);
+
+  function exportPresets() {
+    const blob = new Blob([JSON.stringify(presets, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "mv-presets.json"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importPresets(file: File) {
+    file.text().then((txt) => {
+      try {
+        const obj = JSON.parse(txt);
+        if (obj && typeof obj === "object") {
+          persistPresets({ ...presets, ...obj });
+          toast("프리셋을 가져왔어요.", "success");
+        }
+      } catch {
+        toast("프리셋 파일이 올바르지 않습니다.", "error");
+      }
+    });
+  }
+
+  const filteredRecent = useMemo(
+    () => recent.filter((r) =>
+      (recentFilter === "all" || r.status === recentFilter) &&
+      (!recentSearch.trim() || (r.title || "").toLowerCase().includes(recentSearch.trim().toLowerCase()))
+    ),
+    [recent, recentFilter, recentSearch],
+  );
+
   const busy = job?.status === "queued" || job?.status === "running";
 
   return (
@@ -553,9 +610,25 @@ export default function Home() {
                     <button onClick={() => deletePreset(n)} title="삭제" className="text-[var(--text-faint)] hover:text-red-400">✕</button>
                   </span>
                 ))}
-                <button onClick={savePreset} className="ml-auto rounded-lg bg-[var(--surface-2)] px-3 py-1 text-xs text-[var(--text)] hover:bg-[var(--surface-3)]">
-                  ＋ 현재 설정 저장
-                </button>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <button onClick={savePreset} className="rounded-lg bg-[var(--surface-2)] px-3 py-1 text-xs text-[var(--text)] hover:bg-[var(--surface-3)]">
+                    ＋ 저장
+                  </button>
+                  {Object.keys(presets).length > 0 && (
+                    <button onClick={exportPresets} title="프리셋 내보내기(JSON)" className="rounded-lg bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-dim)] hover:bg-[var(--surface-3)]">
+                      ⬇
+                    </button>
+                  )}
+                  <label title="프리셋 가져오기(JSON)" className="cursor-pointer rounded-lg bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-dim)] hover:bg-[var(--surface-3)]">
+                    ⬆
+                    <input
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) importPresets(f); e.target.value = ""; }}
+                    />
+                  </label>
+                </div>
               </div>
 
               <Card title="1. 음원 / 가사" step="①">
@@ -790,6 +863,7 @@ export default function Home() {
                 </div>
                 <Toggle checked={introCard} onChange={setIntroCard} label="🎬 인트로 타이틀 카드 (제목/아티스트 페이드인)" />
                 <Toggle checked={interludeNote} onChange={setInterludeNote} label="🎵 간주 구간에 ♪ 표시" />
+                <Toggle checked={autoRetry} onChange={setAutoRetry} label="🔁 실패 시 자동 재시도 (1회)" />
               </Card>
 
               <div className="flex gap-2">
@@ -809,6 +883,11 @@ export default function Home() {
                   {busy ? "렌더링 중…" : "🎬 뮤직비디오 생성"}
                 </button>
               </div>
+              {etaText && !busy && (
+                <p className="text-center text-[11px] text-[var(--text-faint)]">
+                  예상 렌더 시간 {etaText} <span className="opacity-70">(해상도·옵션 기준 대략치)</span>
+                </p>
+              )}
 
               <Card title="🎵 앨범 일괄 (여러 곡, 같은 스타일)" step="＋">
                 <p className="text-[11px] text-[var(--text-faint)]">
@@ -971,11 +1050,29 @@ export default function Home() {
           )}
 
           <Card title="최근 작업">
+            {recent.length > 0 && (
+              <div className="flex items-center gap-2">
+                <input
+                  value={recentSearch}
+                  onChange={(e) => setRecentSearch(e.target.value)}
+                  placeholder="제목 검색…"
+                  className={`${inputCls} flex-1`}
+                />
+                <select value={recentFilter} onChange={(e) => setRecentFilter(e.target.value)} className={`${inputCls} w-24`}>
+                  <option value="all">전체</option>
+                  <option value="done">완료</option>
+                  <option value="running">진행중</option>
+                  <option value="error">실패</option>
+                </select>
+              </div>
+            )}
             {recent.length === 0 ? (
               <p className="text-xs text-[var(--text-faint)]">아직 없음</p>
+            ) : filteredRecent.length === 0 ? (
+              <p className="text-xs text-[var(--text-faint)]">검색 결과 없음</p>
             ) : (
               <div className="grid grid-cols-3 gap-2">
-                {recent.slice(0, 9).map((r) => (
+                {filteredRecent.slice(0, 12).map((r) => (
                   <div
                     key={r.id}
                     onClick={() => openJob(r.id)}
