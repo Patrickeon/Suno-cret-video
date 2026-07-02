@@ -31,6 +31,8 @@ export default function Home() {
   const [bgFiles, setBgFiles] = useState<File[]>([]);
   const [bgPick, setBgPick] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [introClip, setIntroClip] = useState<File | null>(null);
+  const [outroClip, setOutroClip] = useState<File | null>(null);
   const [albumFiles, setAlbumFiles] = useState<File[]>([]);
   const [albumBusy, setAlbumBusy] = useState(false);
   const [translateBusy, setTranslateBusy] = useState(false);
@@ -74,6 +76,7 @@ export default function Home() {
   const [fadeOut, setFadeOut] = useState(0);
   const [vignette, setVignette] = useState(false);
   const [filmGrain, setFilmGrain] = useState(false);
+  const [bgPulse, setBgPulse] = useState(false);
 
   // 잡 / 결과
   const [job, setJob] = useState<Job | null>(null);
@@ -259,6 +262,8 @@ export default function Home() {
       if (lyricsText.trim()) fd.append("lyrics_text", lyricsText);
       bgFiles.forEach((f) => fd.append("bg", f));
       if (logoFile) fd.append("logo", logoFile);
+      if (introClip) fd.append("intro_clip", introClip);
+      if (outroClip) fd.append("outro_clip", outroClip);
       fd.append("preview", String(preview));
       fd.append("viz", viz);
       fd.append("shorts", String(shorts));
@@ -279,6 +284,7 @@ export default function Home() {
       fd.append("fade_out", String(fadeOut));
       fd.append("vignette", String(vignette));
       fd.append("film_grain", String(filmGrain));
+      fd.append("bg_pulse", String(bgPulse));
       fd.append("sub_color", subColor);
       fd.append("sub_size", String(subSize));
       fd.append("sub_pos", subPos);
@@ -322,6 +328,7 @@ export default function Home() {
       fd.append("master", String(master));
       fd.append("vignette", String(vignette));
       fd.append("film_grain", String(filmGrain));
+      fd.append("bg_pulse", String(bgPulse));
       fd.append("watermark", watermark);
       fd.append("title", f.name.replace(/\.[^.]+$/, ""));
       try {
@@ -499,6 +506,17 @@ export default function Home() {
     ),
     [recent, recentFilter, recentSearch],
   );
+
+  const jobStats = useMemo(() => {
+    const s = { running: 0, queued: 0, done: 0, error: 0 };
+    recent.forEach((r) => {
+      if (r.status === "running") s.running++;
+      else if (r.status === "queued") s.queued++;
+      else if (r.status === "done") s.done++;
+      else if (r.status === "error") s.error++;
+    });
+    return s;
+  }, [recent]);
 
   const busy = job?.status === "queued" || job?.status === "running";
 
@@ -824,6 +842,24 @@ export default function Home() {
                   files={logoFile ? [logoFile] : []}
                   onFiles={(fs) => setLogoFile(fs[0] ?? null)}
                 />
+                <div className="grid grid-cols-2 gap-3">
+                  <Dropzone
+                    label="인트로 클립 (앞에 붙임)"
+                    hint="mp4 · mov"
+                    accept="video/*"
+                    icon="🎬"
+                    files={introClip ? [introClip] : []}
+                    onFiles={(fs) => setIntroClip(fs[0] ?? null)}
+                  />
+                  <Dropzone
+                    label="아웃트로 클립 (끝에 붙임)"
+                    hint="구독 유도 등"
+                    accept="video/*"
+                    icon="🎬"
+                    files={outroClip ? [outroClip] : []}
+                    onFiles={(fs) => setOutroClip(fs[0] ?? null)}
+                  />
+                </div>
               </Card>
 
               <Card title="4. 품질 / 마감 (유튜브)" step="④">
@@ -861,6 +897,7 @@ export default function Home() {
                   <Toggle checked={vignette} onChange={setVignette} label="비네트" />
                   <Toggle checked={filmGrain} onChange={setFilmGrain} label="필름 그레인" />
                 </div>
+                <Toggle checked={bgPulse} onChange={setBgPulse} label="🔊 오디오 반응 배경 (음량에 밝기 펄스)" />
                 <Toggle checked={introCard} onChange={setIntroCard} label="🎬 인트로 타이틀 카드 (제목/아티스트 페이드인)" />
                 <Toggle checked={interludeNote} onChange={setInterludeNote} label="🎵 간주 구간에 ♪ 표시" />
                 <Toggle checked={autoRetry} onChange={setAutoRetry} label="🔁 실패 시 자동 재시도 (1회)" />
@@ -1050,6 +1087,20 @@ export default function Home() {
           )}
 
           <Card title="최근 작업">
+            {(jobStats.running > 0 || jobStats.queued > 0) && (
+              <div className="flex flex-wrap gap-2 text-[11px]">
+                {jobStats.running > 0 && (
+                  <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-indigo-300">▶ 진행중 {jobStats.running}</span>
+                )}
+                {jobStats.queued > 0 && (
+                  <span className="rounded-full bg-[var(--surface-3)] px-2 py-0.5 text-[var(--text-dim)]">⏳ 대기 {jobStats.queued}</span>
+                )}
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">✓ 완료 {jobStats.done}</span>
+                {jobStats.error > 0 && (
+                  <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-red-300">✕ 실패 {jobStats.error}</span>
+                )}
+              </div>
+            )}
             {recent.length > 0 && (
               <div className="flex items-center gap-2">
                 <input

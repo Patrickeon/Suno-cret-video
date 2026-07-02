@@ -93,6 +93,11 @@ def test_preview_and_logo_flags():
     assert cmd[cmd.index("--logo") + 1] == "/j/logo.png"
 
 
+def test_bg_pulse_flag():
+    assert "--bg-pulse" in _build({"bg_pulse": True})
+    assert "--bg-pulse" not in _build({})
+
+
 def test_phase1_flags():
     cmd = _build({"sub_glow": True, "intro_card": True, "interlude_note": True,
                   "font": "NanumGothic"})

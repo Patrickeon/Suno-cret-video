@@ -119,6 +119,30 @@ def measure_loudnorm(audio, target_i=-14.0, tp=-1.5, lra=11.0):
     except ValueError:
         return None
 
+def audio_rms_envelope(audio):
+    """0.5초 창마다 RMS 레벨(dB) 시계열 [(t, db), ...]. 오디오 반응 배경용."""
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", audio, "-af",
+         "asetnsamples=22050:p=0,astats=metadata=1:reset=1,"
+         "ametadata=print:key=lavfi.astats.Overall.RMS_level",
+         "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    pts, cur = [], None
+    for line in out.splitlines():
+        m = re.search(r"pts_time:([\d.]+)", line)
+        if m:
+            cur = float(m.group(1))
+            continue
+        r = re.search(r"RMS_level=(-?[\d.]+|-?inf|nan)", line)
+        if r and cur is not None:
+            v = r.group(1)
+            if v not in ("-inf", "nan"):
+                pts.append((cur, float(v)))
+            cur = None
+    return pts
+
 def loudnorm_filter(audio, two_pass, target_i=-14.0, tp=-1.5, lra=11.0):
     """loudnorm 필터 문자열. two_pass 면 측정값을 넣어 정밀 정규화(linear)."""
     base = f"loudnorm=I={target_i:g}:TP={tp:g}:LRA={lra:g}"
@@ -438,7 +462,7 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            clip_start=None, clip_len=None, watermark=None, logo=None,
            video_bg=None, crf=20, scale=1.0, preset="medium",
            normalize=False, master=False, fade_in=0.0, fade_out=0.0,
-           vignette=False, grain=False,
+           vignette=False, grain=False, bg_pulse=False,
            intro_card=False, ic_title="", ic_artist="", gaps=None):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
@@ -449,6 +473,26 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     audio_spec = f"{audio_idx}:a"
 
     parts = list(bg_parts)
+
+    # ---- 오디오 반응 배경(밝기 펄스): RMS 엔벨로프 -> sendcmd -> eq ----
+    if bg_pulse:
+        env = audio_rms_envelope(audio)
+        if env:
+            vals = sorted(d for _, d in env)
+            base = vals[len(vals) // 2]  # 중앙값
+            off = clip_start or 0.0
+            lines = []
+            for t, d in env:
+                ot = t - off
+                if ot < 0 or (duration and ot > duration):
+                    continue
+                b = max(-0.07, min(0.15, (d - base) * 0.02))
+                lines.append(f"{ot:.2f} eq brightness {b:.3f};")
+            if lines:
+                write_textfile("\n".join(lines), os.path.join(work_dir, "_pulse.cmd"))
+                parts.append(f"{bg_label}sendcmd=f=_pulse.cmd,"
+                             f"eq=brightness=0:eval=frame[bgp]")
+                bg_label = "[bgp]"
 
     # ---- 오디오 필터 체인 (loudnorm / 페이드) ----
     # 유튜브 기준 -14 LUFS 정규화 + 인트로/아웃트로 페이드.
@@ -676,6 +720,8 @@ def main():
     ap.add_argument("--fade-out", type=float, default=0.0, help="아웃트로 페이드(초, 영상+오디오)")
     ap.add_argument("--vignette", action="store_true", help="비네트(가장자리 어둡게)")
     ap.add_argument("--film-grain", action="store_true", help="필름 그레인(노이즈) 질감")
+    ap.add_argument("--bg-pulse", action="store_true",
+                    help="오디오 음량에 반응해 배경 밝기가 미세하게 펄스")
     ap.add_argument("--preview-secs", type=int, default=0,
                     help=">0 이면 앞 N초만 저화질·초고속으로 렌더(미리보기)")
     args = ap.parse_args()
@@ -768,7 +814,7 @@ def main():
            video_bg=args.video_bg, scale=scale, preset=preset, crf=crf,
            normalize=args.normalize, master=args.master,
            fade_in=args.fade_in, fade_out=args.fade_out,
-           vignette=args.vignette, grain=args.film_grain,
+           vignette=args.vignette, grain=args.film_grain, bg_pulse=args.bg_pulse,
            intro_card=args.intro_card, ic_title=args.title or "",
            ic_artist=args.artist or "", gaps=gaps)
 
@@ -780,7 +826,7 @@ def main():
 
     if not args.keep_ass:
         for tmp in ("_sub.ass", "_wm.txt", "_ttl.txt", "_art.txt",
-                    "_ic_ttl.txt", "_ic_art.txt"):
+                    "_ic_ttl.txt", "_ic_art.txt", "_pulse.cmd"):
             try:
                 os.remove(os.path.join(out_dir, tmp))
             except OSError:

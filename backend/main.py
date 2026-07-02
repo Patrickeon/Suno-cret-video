@@ -60,6 +60,8 @@ MAX_IMAGE_MB = 15
 AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 LYRICS_EXTS = {".txt", ".lrc"}
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
+MAX_CLIP_MB = 80
 
 
 class UploadError(Exception):
@@ -142,6 +144,14 @@ def _do_render(jid, d, audio, lyrics, bg_paths, opts):
         thumb = os.path.splitext(out)[0] + "_thumb.jpg"
         has_thumb = os.path.exists(thumb)
         if code == 0 and os.path.exists(out):
+            # D12: 인트로/아웃트로 클립 병합 (실패해도 본편은 유지)
+            if opts.get("intro_clip") or opts.get("outro_clip"):
+                try:
+                    jobs.update(jid, stage="인트로/아웃트로 병합 중…")
+                    render.concat_clips(out, opts.get("intro_clip"), opts.get("outro_clip"))
+                except Exception as e:  # noqa: BLE001
+                    print(f"[concat] 병합 실패(jid={jid}): {e}")
+                jobs.update(jid, stage="")
             names = ["out.mp4"] + (["out_thumb.jpg"] if has_thumb else [])
             try:
                 STORAGE.save_outputs(jid, d, names)
@@ -199,6 +209,8 @@ async def create_render(
     lyrics_file: Optional[UploadFile] = File(None),
     bg: List[UploadFile] = File(default=[]),
     logo: Optional[UploadFile] = File(None),
+    intro_clip: Optional[UploadFile] = File(None),
+    outro_clip: Optional[UploadFile] = File(None),
     lyrics_text: str = Form(""),
     viz: str = Form("waves"),
     shorts: bool = Form(False),
@@ -219,6 +231,7 @@ async def create_render(
     fade_out: float = Form(0.0),
     vignette: bool = Form(False),
     film_grain: bool = Form(False),
+    bg_pulse: bool = Form(False),
     sub_color: str = Form("FFFFFF"),
     sub_size: float = Form(1.0),
     sub_pos: str = Form("bottom"),
@@ -239,6 +252,9 @@ async def create_render(
                 _check_ext(b.filename, IMAGE_EXTS, "배경 이미지")
         if logo is not None and logo.filename:
             _check_ext(logo.filename, IMAGE_EXTS, "로고")
+        for clip, lbl in ((intro_clip, "인트로 클립"), (outro_clip, "아웃트로 클립")):
+            if clip is not None and clip.filename:
+                _check_ext(clip.filename, VIDEO_EXTS, lbl)
     except UploadError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     if not _clip_start_ok(clip_start):
@@ -275,6 +291,14 @@ async def create_render(
         if logo is not None and logo.filename:
             logo_path = os.path.join(d, "logo_" + logo.filename)
             _save_upload(logo, logo_path, MAX_IMAGE_MB)
+
+        intro_path = outro_path = None
+        if intro_clip is not None and intro_clip.filename:
+            intro_path = os.path.join(d, "intro_" + intro_clip.filename)
+            _save_upload(intro_clip, intro_path, MAX_CLIP_MB)
+        if outro_clip is not None and outro_clip.filename:
+            outro_path = os.path.join(d, "outro_" + outro_clip.filename)
+            _save_upload(outro_clip, outro_path, MAX_CLIP_MB)
     except UploadError as e:
         jobs.update(jid, status="error", error=str(e))
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -299,6 +323,7 @@ async def create_render(
         "fade_out": fade_out,
         "vignette": vignette,
         "film_grain": film_grain,
+        "bg_pulse": bg_pulse,
         "sub_color": sub_color,
         "sub_size": sub_size,
         "sub_pos": sub_pos,
@@ -308,6 +333,8 @@ async def create_render(
         "font": font,
         "auto_retry": auto_retry,
         "logo": logo_path,
+        "intro_clip": intro_path,
+        "outro_clip": outro_path,
         "preview": preview,
     }
 
