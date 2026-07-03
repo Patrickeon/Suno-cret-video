@@ -91,7 +91,19 @@ AI가 생성한 영상 클립을 **배경 트랙**으로 깔고, 그 위에 비�
 - `backend/video_providers.py` :
   - **Replicate** (`ReplicateProvider`, 기본·권장) — 실제 동작. `REPLICATE_API_TOKEN`,
     모델은 `REPLICATE_MODEL`(기본 `minimax/video-01`)로 교체 가능.
-  - Kaiber / Higgsfield — submit→poll→download **스텁**. API 사양 받으면 `_submit`/`_poll`만 채우면 동작.
+  - **fal.ai** (`FalProvider`) — 공개 큐 API 실제 구현. `FAL_KEY`,
+    모델은 `FAL_MODEL`(기본 Kling 1.6 text-to-video). Kling·Minimax·Wan 등 사용 가능.
+  - **Mock** (`MockProvider`) — 키·네트워크 없이 ffmpeg 로 장면별 그라데이션 클립 생성.
+    스토리보드 파이프라인 데모/테스트용.
+  - Kaiber — **공개 셀프서비스 API 없음**(2026-07 확인, 제휴 전용). 사양 확보 시
+    `_submit`/`_poll`만 채우면 동작. Higgsfield 도 스텁 유지.
+
+### 🎬 AI 스토리보드 MV (장면 전환 뮤직비디오)
+
+`POST /api/storyboard` `{job_id, scenes}` → LLM이 가사를 읽고 장면별 영어 프롬프트 작성
+→ 장면마다 AI 클립 생성 → 크로스페이드로 이어붙여 배경 트랙 구성 → 같은 자산으로 재렌더.
+UI: `AI 편집 ✨` 탭의 **🎬 AI 스토리보드 MV** (장면 수 3~8 선택).
+LLM 키가 없으면 기본 분위기 프롬프트로 폴백, provider 를 `mock` 으로 두면 키 없이 파이프라인 데모 가능.
 
 > 비용/품질 확인 후 Kaiber·Higgsfield·fal.ai 등으로 provider 교체 가능 (UI ⚙️ 또는 환경변수).
 

@@ -96,9 +96,11 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
 
-  // AI 배경 영상
+  // AI 배경 영상 / 스토리보드
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiVideoBusy, setAiVideoBusy] = useState(false);
+  const [storyboardBusy, setStoryboardBusy] = useState(false);
+  const [storyboardScenes, setStoryboardScenes] = useState(4);
 
   // 설정 / 도움말 / 테마 / 토스트
   const [showSettings, setShowSettings] = useState(false);
@@ -477,6 +479,30 @@ export default function Home() {
       toast(e instanceof Error ? e.message : "AI 영상 요청 실패", "error");
     } finally {
       setAiVideoBusy(false);
+    }
+  }
+
+  async function generateStoryboard() {
+    if (!job || job.status !== "done") {
+      toast("먼저 '로컬 생성'으로 기본 영상을 만든 뒤 스토리보드를 생성하세요.", "error");
+      return;
+    }
+    setStoryboardBusy(true);
+    try {
+      const r = await fetch(`${API}/api/storyboard`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: job.id, scenes: storyboardScenes }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || `오류 (${r.status})`);
+      setJob({ id: data.job_id, status: "queued", progress: 0, error: null, log: "", video: false, thumb: false });
+      poll(data.job_id);
+      toast(`🎬 ${data.scenes}개 장면 스토리보드 MV 생성을 시작했어요. (장면당 수십 초~수 분)`, "info");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "스토리보드 요청 실패", "error");
+    } finally {
+      setStoryboardBusy(false);
     }
   }
 
@@ -1109,6 +1135,38 @@ export default function Home() {
                     className="shrink-0 rounded-lg bg-fuchsia-500 px-4 py-2 text-sm font-medium text-white hover:bg-fuchsia-400 disabled:opacity-50"
                   >
                     {aiVideoBusy ? "생성 중…" : "생성"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
+                <h3 className="flex items-center gap-2 text-sm font-medium">
+                  🎬 AI 스토리보드 MV
+                  {settings && !settings.video_key_set && settings.video_provider !== "mock" && (
+                    <span className="text-[11px] text-amber-300">(⚙️ 영상 키 필요 · mock은 키 없이 OK)</span>
+                  )}
+                </h3>
+                <p className="text-[11px] text-[var(--text-dim)]">
+                  AI가 가사를 읽고 장면별 프롬프트를 짠 뒤, 장면마다 다른 AI 영상을 만들어
+                  크로스페이드로 이어붙인 &lsquo;장면이 바뀌는&rsquo; 뮤직비디오를 만듭니다.
+                </p>
+                <div className="flex gap-2">
+                  <select
+                    value={storyboardScenes}
+                    onChange={(e) => setStoryboardScenes(Number(e.target.value))}
+                    className={`${inputCls} w-32 shrink-0`}
+                  >
+                    <option value={3}>3 장면</option>
+                    <option value={4}>4 장면</option>
+                    <option value={6}>6 장면</option>
+                    <option value={8}>8 장면</option>
+                  </select>
+                  <button
+                    onClick={generateStoryboard}
+                    disabled={storyboardBusy}
+                    className="flex-1 rounded-lg bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-400 disabled:opacity-50"
+                  >
+                    {storyboardBusy ? "요청 중…" : "🎬 스토리보드 MV 생성"}
                   </button>
                 </div>
               </div>

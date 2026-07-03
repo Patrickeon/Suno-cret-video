@@ -126,7 +126,90 @@ class ReplicateProvider(_PollingHTTPProvider):
         return "pending", None
 
 
+class FalProvider(_PollingHTTPProvider):
+    """fal.ai — 공개 셀프서비스 API. Kling·Minimax·Wan 등 최신 영상 모델 호스팅.
+    'Kaiber 같은' 상용 영상 생성을 프로그래밍으로 쓰는 가장 현실적인 경로.
+
+    흐름(큐 API): POST https://queue.fal.run/{model} -> request_id
+      GET .../requests/{id}/status -> IN_QUEUE/IN_PROGRESS/COMPLETED
+      GET .../requests/{id} -> {"video": {"url": ...}}
+    모델은 FAL_MODEL 환경변수 또는 model= 인자로 교체.
+    """
+    ENV_KEY = "FAL_KEY"
+    DEFAULT_BASE_URL = "https://queue.fal.run"
+    DEFAULT_MODEL = "fal-ai/kling-video/v1.6/standard/text-to-video"
+
+    def __init__(self, api_key=None, base_url=None, model=None, **kw):
+        super().__init__(api_key=api_key, base_url=base_url, **kw)
+        self.model = model or os.environ.get("FAL_MODEL", self.DEFAULT_MODEL)
+
+    def _headers(self):
+        return {"Authorization": f"Key {self.api_key}"}
+
+    def _submit(self, prompt, duration, aspect, **opts):
+        payload = {"prompt": prompt}
+        if aspect:
+            payload["aspect_ratio"] = aspect  # 미지원 모델은 무시
+        r = self.client.post(
+            f"{self.base_url}/{self.model}",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=payload,
+        )
+        r.raise_for_status()
+        return r.json()["request_id"]
+
+    def _poll(self, job_id):
+        r = self.client.get(
+            f"{self.base_url}/{self.model}/requests/{job_id}/status",
+            headers=self._headers())
+        r.raise_for_status()
+        status = r.json().get("status")
+        if status == "COMPLETED":
+            res = self.client.get(
+                f"{self.base_url}/{self.model}/requests/{job_id}",
+                headers=self._headers())
+            res.raise_for_status()
+            d = res.json()
+            url = ((d.get("video") or {}).get("url")
+                   or (d.get("videos") or [{}])[0].get("url"))
+            return ("done", url) if url else ("error", None)
+        if status in ("FAILED", "CANCELLED", "ERROR"):
+            return "error", None
+        return "pending", None
+
+
+class MockProvider(VideoProvider):
+    """오프라인 테스트용 — API 키·네트워크 없이 ffmpeg 로 클립을 만든다.
+    프롬프트 해시로 색을 골라 '장면마다 다른' 흐르는 그라데이션 클립 생성.
+    스토리보드 파이프라인 E2E 검증과 데모에 사용."""
+
+    def __init__(self, api_key=None, **kw):  # noqa: ARG002 (키 불필요)
+        pass
+
+    def generate(self, prompt, out_path, duration=5, aspect="16:9", **opts):
+        import hashlib
+        import subprocess
+        h = hashlib.md5((prompt or "scene").encode("utf-8")).digest()
+        # 프롬프트마다 다른 어두운 톤 2색 (자막 가독성 유지)
+        c0 = f"0x{h[0] % 96:02X}{h[1] % 96:02X}{h[2] % 128:02X}"
+        c1 = f"0x{h[3] % 128:02X}{h[4] % 96:02X}{h[5] % 96:02X}"
+        w, hgt = (720, 1280) if aspect == "9:16" else (1280, 720)
+        src = (f"gradients=s={w}x{hgt}:c0={c0}:c1={c1}:speed=0.05:"
+               f"d={float(duration):.2f}")
+        cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", src,
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+               os.path.abspath(out_path)]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f"mock 클립 생성 실패: {(proc.stderr or '')[-200:]}")
+        return out_path
+
+
 class KaiberProvider(_PollingHTTPProvider):
+    """⚠️ Kaiber 는 현재 공개 셀프서비스 개발자 API 를 제공하지 않는다
+    (2026-07 확인: kaiber.ai 에 API 문서·developer 포털 없음, 파트너 제휴 전용).
+    제휴로 사양을 받으면 아래 두 훅만 채우면 동작한다. 그 전까지는
+    같은 급 모델을 호스팅하는 fal.ai(FalProvider) 또는 Replicate 사용 권장."""
     ENV_KEY = "KAIBER_API_KEY"
     DEFAULT_BASE_URL = "https://api.kaiber.ai"  # TODO: 실제 베이스 URL 확인
 
@@ -155,9 +238,15 @@ class HiggsfieldProvider(_PollingHTTPProvider):
 
 _PROVIDERS = {
     "replicate": ReplicateProvider,
-    "kaiber": KaiberProvider,
+    "fal": FalProvider,
+    "mock": MockProvider,        # 키 불필요 (로컬 ffmpeg 데모/테스트)
+    "kaiber": KaiberProvider,    # 공개 API 없음 — 사양 확보 시 활성화
     "higgsfield": HiggsfieldProvider,
 }
+
+
+# 키가 없어도 동작하는 provider (엔드포인트 키 검사에서 제외)
+KEYLESS_PROVIDERS = {"mock"}
 
 
 def get_video_provider(name, **kwargs):

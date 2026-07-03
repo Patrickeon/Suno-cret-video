@@ -19,6 +19,9 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--font", str(opts["font"])]
     if opts.get("video_bg"):
         cmd += ["--video-bg", opts["video_bg"]]
+        # 영상 배경일 땐 --bg 가 빠지므로, 레코드 모드 앨범아트를 명시적으로 전달
+        if opts.get("disc") and bg_list:
+            cmd += ["--disc-art", bg_list[0]]
     elif bg_list:
         cmd += ["--bg"] + bg_list
 
@@ -177,6 +180,43 @@ def concat_clips(main, intro=None, outro=None):
         os.replace(tmp, main)
     else:
         raise RuntimeError("인트로/아웃트로 병합 실패: " + (proc.stderr or "")[-300:])
+
+
+def concat_scene_clips(clips, durations, out, w=1920, h=1080, fps=30, fade=0.6):
+    """스토리보드 장면 클립들 -> 크로스페이드로 이어진 배경 트랙 하나.
+
+    각 클립을 무한 루프로 장면 길이+페이드만큼 늘리고 W×H cover-crop 후
+    xfade 로 연결한다. 결과는 make_mv --video-bg 로 깔린다."""
+    n = len(clips)
+    if n == 0:
+        raise ValueError("장면 클립이 없습니다")
+    inputs, parts = [], []
+    for i, (c, dur) in enumerate(zip(clips, durations)):
+        need = dur + (fade if i < n - 1 else 0)
+        inputs += ["-stream_loop", "-1", "-i", c]
+        parts.append(
+            f"[{i}:v]trim=duration={need:.3f},setpts=PTS-STARTPTS,"
+            f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"crop={w}:{h},setsar=1,fps={fps}[v{i}]")
+    if n == 1:
+        parts.append("[v0]null[v]")
+    else:
+        prev, elapsed = "v0", 0.0
+        for i in range(1, n):
+            elapsed += durations[i - 1]
+            lbl = "v" if i == n - 1 else f"x{i}"
+            parts.append(f"[{prev}][v{i}]xfade=transition=fade:"
+                         f"duration={fade}:offset={elapsed:.3f}[{lbl}]")
+            prev = lbl
+    cmd = (["ffmpeg", "-y"] + inputs +
+           ["-filter_complex", ";".join(parts), "-map", "[v]", "-an",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-pix_fmt", "yuv420p", os.path.abspath(out)])
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    if proc.returncode != 0 or not os.path.exists(out):
+        raise RuntimeError("장면 병합 실패: " + (proc.stderr or "")[-300:])
+    return out
 
 
 def run_render(job_dir, audio, lyrics, bg_list, opts, on_progress=None, on_proc=None):

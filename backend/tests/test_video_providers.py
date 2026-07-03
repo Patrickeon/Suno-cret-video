@@ -30,3 +30,26 @@ def test_replicate_default_model(monkeypatch):
         pytest.skip(f"httpx 미설치 등으로 생성 불가: {e}")
     assert p.model == vp.ReplicateProvider.DEFAULT_MODEL
     assert p.base_url.startswith("https://api.replicate.com")
+
+
+def test_fal_registered_and_headers(monkeypatch):
+    monkeypatch.delenv("FAL_MODEL", raising=False)
+    p = vp.get_video_provider("fal", api_key="k123")
+    assert isinstance(p, vp.FalProvider)
+    assert p._headers() == {"Authorization": "Key k123"}
+    assert p.model == vp.FalProvider.DEFAULT_MODEL
+    assert p.base_url == "https://queue.fal.run"
+
+
+def test_mock_keyless():
+    assert "mock" in vp.KEYLESS_PROVIDERS
+    p = vp.get_video_provider("mock")  # 키 없이 생성 가능
+    assert isinstance(p, vp.MockProvider)
+
+
+def test_mock_generates_clip(tmp_path):
+    p = vp.get_video_provider("mock")
+    out = str(tmp_path / "c.mp4")
+    p.generate("dreamy night city", out, duration=1, aspect="16:9")
+    import os
+    assert os.path.exists(out) and os.path.getsize(out) > 1000

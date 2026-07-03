@@ -156,3 +156,9 @@ def test_new_design_flags_omitted_by_default():
     cmd = _build({})
     for flag in ("--disc", "--progress-bar", "--sub-preview", "--bg-grad"):
         assert flag not in cmd
+
+
+def test_disc_art_forwarded_with_video_bg():
+    cmd = _build({"video_bg": "clip.mp4", "disc": True}, bg=["art.jpg"])
+    assert cmd[cmd.index("--disc-art") + 1] == "art.jpg"
+    assert "--video-bg" in cmd and "--bg" not in cmd

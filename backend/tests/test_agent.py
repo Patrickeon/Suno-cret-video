@@ -111,3 +111,20 @@ def test_edit_tool_schema_has_design_fields():
     props = agent.EDIT_TOOL["input_schema"]["properties"]
     for k in ("viz_color", "bg_style", "bg_grad", "disc", "progress_bar", "sub_preview"):
         assert k in props
+
+
+def test_generate_storyboard(monkeypatch):
+    scenes = [{"prompt": "misty dawn city, cinematic, no text", "label": "도입"},
+              {"prompt": "neon rain street, cinematic, no text", "label": "후렴"}]
+    tool = _Blk(type="tool_use", id="s1", name="set_storyboard",
+                input={"scenes": scenes, "style": "cinematic"})
+    fake = _FakeProvider([_Resp([tool])])
+    monkeypatch.setattr(agent, "get_provider", lambda *a, **k: fake)
+    out = agent.generate_storyboard("선", "가사...", n_scenes=2, api_key="x")
+    assert len(out) == 2 and out[0]["prompt"].startswith("misty")
+
+
+def test_generate_storyboard_no_tool_empty(monkeypatch):
+    fake = _FakeProvider([_Resp([_Blk(type="text", text="...")])])
+    monkeypatch.setattr(agent, "get_provider", lambda *a, **k: fake)
+    assert agent.generate_storyboard("t", "l", api_key="x") == []

@@ -176,6 +176,72 @@ def suggest_palette(title, lyrics, provider_name="claude", model=None, api_key=N
 
 
 # ─────────────────────────────────────────────────────────────
+# AI 스토리보드 — 가사 -> 장면별 text-to-video 프롬프트
+# ─────────────────────────────────────────────────────────────
+
+STORYBOARD_TOOL = {
+    "name": "set_storyboard",
+    "description": "뮤직비디오 스토리보드(장면별 영상 생성 프롬프트)를 지정한다.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "scenes": {
+                "type": "array",
+                "description": "곡 흐름 순서대로, 요청된 개수만큼의 장면",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string",
+                                   "description": "text-to-video 용 영어 프롬프트. 카메라·조명·"
+                                                  "분위기 포함, 텍스트/자막/로고 금지"},
+                        "label": {"type": "string", "description": "장면 한 줄 요약 (한국어)"},
+                    },
+                    "required": ["prompt"],
+                },
+            },
+            "style": {"type": "string",
+                      "description": "전 장면을 관통하는 비주얼 스타일 한 줄 (영어)"},
+        },
+        "required": ["scenes"],
+    },
+}
+
+STORYBOARD_SYSTEM = """당신은 뮤직비디오 감독입니다. 곡 제목과 가사를 읽고
+set_storyboard 도구로 장면별 text-to-video 프롬프트를 만드세요.
+
+규칙:
+- 요청된 장면 수를 정확히 지키세요. 곡의 감정 흐름(도입→전개→클라이맥스→마무리)을 따라가세요.
+- 모든 장면이 하나의 뮤직비디오처럼 보이도록 색감·주인공·스타일을 통일하고,
+  그 공통 스타일 문구를 각 프롬프트 끝에 반복해 붙이세요.
+- 프롬프트는 영어로, 카메라 움직임·조명·분위기를 구체적으로. 인물 클로즈업보다
+  분위기 샷(풍경/실루엣/추상)을 선호 — AI 영상의 얼굴 왜곡을 피합니다.
+- 영상 안에 글자·자막·로고가 나오지 않게 "no text, no watermark"를 포함하세요.
+- 배경으로 깔리는 영상이므로 루프에 어울리는 잔잔한 모션(slow motion, ambient)으로.
+반드시 도구를 호출하세요."""
+
+
+def generate_storyboard(title, lyrics, n_scenes=4, provider_name="claude",
+                        model=None, api_key=None):
+    """곡 정보 -> [{prompt, label}, ...] (n_scenes 개). 도구 미호출 시 빈 리스트."""
+    kw = {}
+    if model:
+        kw["model"] = model
+    if api_key:
+        kw["api_key"] = api_key
+    provider = get_provider(provider_name, **kw)
+    user = (f"제목: {title or '(미정)'}\n장면 수: {n_scenes}\n\n"
+            f"가사:\n{(lyrics or '(가사 없음 — 분위기는 제목으로 유추)')[:2500]}")
+    resp = provider.chat(STORYBOARD_SYSTEM, [{"role": "user", "content": user}],
+                         tools=[STORYBOARD_TOOL])
+    for b in resp.content:
+        if b.type == "tool_use" and b.name == "set_storyboard":
+            scenes = list((b.input or {}).get("scenes") or [])
+            scenes = [s for s in scenes if (s or {}).get("prompt")]
+            return scenes[:n_scenes] if scenes else []
+    return []
+
+
+# ─────────────────────────────────────────────────────────────
 # 유튜브 메타데이터 생성 — 제목/설명/태그/챕터
 # ─────────────────────────────────────────────────────────────
 

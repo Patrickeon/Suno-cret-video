@@ -411,6 +411,104 @@ class AiVideoBody(BaseModel):
     aspect: str | None = None
 
 
+class StoryboardBody(BaseModel):
+    job_id: str
+    scenes: int = 4
+
+
+def _fallback_storyboard(title, n):
+    """LLM 키가 없을 때 쓰는 기본 장면 프롬프트 (분위기 순환)."""
+    moods = ["dawn mist over a quiet city, cinematic wide shot",
+             "sunlit clouds drifting in slow motion, dreamy",
+             "neon lights reflecting on wet streets at night",
+             "silhouette walking through a field at golden hour",
+             "abstract flowing ink in deep water, moody",
+             "stars and aurora over mountains, timelapse"]
+    return [{"prompt": f"{moods[i % len(moods)]}, about '{title}', "
+                       "ambient slow motion, no text, no watermark",
+             "label": f"장면 {i + 1}"} for i in range(n)]
+
+
+def _do_storyboard(njid, nd, assets, base_job, n_scenes, llm_cfg, vp_name, vp_key):
+    """가사 -> 장면 프롬프트 -> 장면별 AI 클립 -> 크로스페이드 병합 -> 재렌더."""
+    jobs.update(njid, status="running", progress=0, stage="🎬 장면 구상 중…")
+    opts = {k: v for k, v in (base_job.get("opts") or {}).items() if k != "preview"}
+    title = opts.get("title") or base_job.get("title", "")
+    lyrics_text = _read_lyrics(assets.get("lyrics"))
+
+    scenes = []
+    if llm_cfg.get("key"):
+        try:
+            scenes = agent.generate_storyboard(
+                title, lyrics_text, n_scenes, provider_name=llm_cfg["provider"],
+                model=llm_cfg["model"], api_key=llm_cfg["key"])
+        except Exception as e:  # noqa: BLE001
+            print(f"[storyboard] LLM 실패, 기본 장면 사용: {e}")
+    if not scenes:
+        scenes = _fallback_storyboard(title, n_scenes)
+
+    try:
+        total = render._duration(assets["audio"])
+    except Exception:  # noqa: BLE001
+        total = 180.0
+    per = max(4.0, total / len(scenes))
+    shorts = bool(base_job.get("shorts"))
+    aspect = "9:16" if shorts else "16:9"
+    w, h = (1080, 1920) if shorts else (1920, 1080)
+
+    clips = []
+    try:
+        vp = video_providers.get_video_provider(vp_name, api_key=vp_key)
+        for i, sc in enumerate(scenes):
+            if _cancelled(njid):
+                return
+            jobs.update(njid, stage=f"🎥 장면 {i + 1}/{len(scenes)} 생성 중… "
+                                    f"({sc.get('label') or ''})".strip(),
+                        progress=int(i / len(scenes) * 40))
+            clip = os.path.join(nd, f"scene{i}.mp4")
+            vp.generate(sc["prompt"], clip, duration=6, aspect=aspect)
+            clips.append(clip)
+        jobs.update(njid, stage="🎞️ 장면 병합 중…", progress=45)
+        bg = os.path.join(nd, "storyboard_bg.mp4")
+        render.concat_scene_clips(clips, [per] * len(clips), bg, w=w, h=h,
+                                  fps=int(opts.get("fps", 30) or 30))
+    except Exception as e:  # noqa: BLE001
+        if not _cancelled(njid):
+            jobs.update(njid, status="error", error=f"스토리보드 생성 실패: {e}", stage="")
+        return
+    jobs.update(njid, stage="", storyboard=[
+        {"label": s.get("label", ""), "prompt": s.get("prompt", "")} for s in scenes])
+    opts = {**opts, "video_bg": bg}
+    _do_render(njid, nd, assets["audio"], assets["lyrics"], assets["bg"], opts)
+
+
+@app.post("/api/storyboard")
+def storyboard(body: StoryboardBody):
+    """가사 기반 장면 전환 AI 뮤직비디오 (스토리보드 모드)."""
+    job = jobs.get(body.job_id)
+    if not job:
+        return JSONResponse({"error": "프로젝트를 찾을 수 없습니다."}, status_code=404)
+    assets = job.get("assets")
+    if not assets:
+        return JSONResponse({"error": "이 프로젝트에는 자산이 없습니다."}, status_code=400)
+    cfg = settings.get_raw()
+    vp_name = cfg["video_provider"]
+    vp_key = settings.get_key("video_api_key")
+    if not vp_key and vp_name not in video_providers.KEYLESS_PROVIDERS:
+        return JSONResponse(
+            {"error": "AI 영상 키가 없습니다. ⚙️ 설정에서 영상 provider API 키를 "
+                      "입력하세요. (키 없이 파이프라인만 보려면 provider 를 mock 으로)"},
+            status_code=400,
+        )
+    n = max(2, min(int(body.scenes or 4), 8))
+    llm_cfg = {"provider": cfg["llm_provider"], "model": cfg["llm_model"],
+               "key": settings.get_key("llm_api_key")}
+    njid, nd = jobs.create_job(title=f"{job.get('title', '')} (스토리보드)")
+    jobs.update(njid, assets=assets, shorts=bool(job.get("shorts")))
+    _submit(_do_storyboard, njid, njid, nd, assets, job, n, llm_cfg, vp_name, vp_key)
+    return {"job_id": njid, "status": "queued", "scenes": n}
+
+
 def _do_ai_video(njid, nd, assets, base_job, prompt, aspect, provider_name, key):
     """AI 영상 클립 생성 -> 그 클립을 --video-bg 로 깔고 같은 자산으로 재렌더."""
     jobs.update(njid, status="running", progress=0,
@@ -437,14 +535,13 @@ def ai_video(body: AiVideoBody):
     if not body.prompt.strip():
         return JSONResponse({"error": "영상 프롬프트를 입력하세요."}, status_code=400)
 
+    cfg = settings.get_raw()
     key = settings.get_key("video_api_key")
-    if not key:
+    if not key and cfg["video_provider"] not in video_providers.KEYLESS_PROVIDERS:
         return JSONResponse(
             {"error": "AI 영상 키가 없습니다. ⚙️ 설정에서 영상 provider API 키를 입력하세요."},
             status_code=400,
         )
-
-    cfg = settings.get_raw()
     aspect = body.aspect or ("9:16" if job.get("shorts") else "16:9")
     njid, nd = jobs.create_job(title=job.get("title", ""))
     jobs.update(njid, assets=assets, shorts=bool(job.get("shorts")))
