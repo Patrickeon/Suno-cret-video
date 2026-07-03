@@ -30,6 +30,14 @@ import re
 import subprocess
 import sys
 
+# Windows 콘솔/서브프로세스의 cp949 등에서 이모지·특수문자 출력이
+# UnicodeEncodeError 로 렌더를 죽이지 않도록 안전하게 재설정.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 FPS = 30
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONTS_DIR = os.path.join(ROOT_DIR, "fonts")

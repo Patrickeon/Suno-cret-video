@@ -266,6 +266,9 @@ export default function Home() {
       toast("음원 파일을 선택하세요.", "error");
       return;
     }
+    if (disc && bgFiles.length === 0) {
+      toast("💿 레코드 모드는 배경 이미지(앨범아트)가 필요해요 — 이번 렌더에선 생략돼요.", "info");
+    }
     setSubmitting(true);
     setJob(null);
     try {

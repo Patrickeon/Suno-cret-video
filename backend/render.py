@@ -185,9 +185,11 @@ def run_render(job_dir, audio, lyrics, bg_list, opts, on_progress=None, on_proc=
     make_mv.py 가 출력하는 'MV_PROGRESS <pct>' 라인은 진행률 콜백으로 보내고
     로그에선 제외한다. on_proc 가 주어지면 Popen 객체를 넘겨 취소(kill)에 쓴다."""
     cmd, out = build_command(job_dir, audio, lyrics, bg_list, opts)
+    # 자식 파이썬의 stdout 인코딩을 utf-8 로 고정 (Windows cp949 크래시 방지)
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8:replace"}
     proc = subprocess.Popen(
         cmd, cwd=job_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
+        text=True, encoding="utf-8", errors="replace", env=env,
     )
     if on_proc:
         on_proc(proc)
