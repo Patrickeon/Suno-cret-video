@@ -4,7 +4,7 @@
 업로드하면 백엔드가 렌더해 영상/썸네일을 돌려준다.
 
 > 장기 목표: "Cursor for 비디오 편집" — 자연어로 영상을 수정하는 AI 에이전트 + 외부 AI
-> 영상 생성(Kaiber/Higgsfield) 연동 + GCP 배포. (로드맵은 아래 참고)
+> 영상 생성(Replicate/fal.ai) 연동 + GCP 배포. (로드맵은 아래 참고)
 
 ## 구조
 
@@ -95,8 +95,8 @@ AI가 생성한 영상 클립을 **배경 트랙**으로 깔고, 그 위에 비�
     모델은 `FAL_MODEL`(기본 Kling 1.6 text-to-video). Kling·Minimax·Wan 등 사용 가능.
   - **Mock** (`MockProvider`) — 키·네트워크 없이 ffmpeg 로 장면별 그라데이션 클립 생성.
     스토리보드 파이프라인 데모/테스트용.
-  - Kaiber — **공개 셀프서비스 API 없음**(2026-07 확인, 제휴 전용). 사양 확보 시
-    `_submit`/`_poll`만 채우면 동작. Higgsfield 도 스텁 유지.
+  - Kaiber / Higgsfield — **공개 셀프서비스 API 없음**(2026-07 확인, 제휴 전용)이라 제거.
+    사양 확보 시 `_PollingHTTPProvider` 상속으로 훅 2개만 채우면 재추가 가능.
 
 ### 🎬 AI 스토리보드 MV (장면 전환 뮤직비디오)
 
@@ -105,7 +105,7 @@ AI가 생성한 영상 클립을 **배경 트랙**으로 깔고, 그 위에 비�
 UI: `AI 편집 ✨` 탭의 **🎬 AI 스토리보드 MV** (장면 수 3~8 선택).
 LLM 키가 없으면 기본 분위기 프롬프트로 폴백, provider 를 `mock` 으로 두면 키 없이 파이프라인 데모 가능.
 
-> 비용/품질 확인 후 Kaiber·Higgsfield·fal.ai 등으로 provider 교체 가능 (UI ⚙️ 또는 환경변수).
+> 비용/품질 확인 후 Replicate ↔ fal.ai(Kling·Minimax 등) provider 교체 가능 (UI ⚙️ 또는 환경변수).
 
 ## GCP 배포 (Phase 5, 골격)
 
@@ -162,5 +162,5 @@ LLM 키가 없으면 기본 분위기 프롬프트로 폴백, provider 를 `mock
 - [x] **1. 로컬 웹 MVP** — 업로드 → 생성 → 미리보기
 - [x] **2. 영속화/검증/정리 + 히스토리** *(작업큐 분리는 향후)*
 - [x] **3. AI 편집 에이전트** — 자연어 → tool call → 옵션 수정 → 재렌더 *(키 넣으면 동작)*
-- [x] **4. 외부 AI 영상** — Replicate provider 동작 + `/api/ai-video` + UI 연결 *(Kaiber/Higgsfield는 스텁 유지)*
+- [x] **4. 외부 AI 영상** — Replicate·fal.ai provider + `/api/ai-video` + 🎬 스토리보드 MV
 - [~] **5. GCP 배포** — Dockerfile·compose·cloudbuild·가이드 완료, 실제 `gcloud run deploy`·GCS 이전 남음

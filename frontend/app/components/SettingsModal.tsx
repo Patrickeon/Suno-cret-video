@@ -91,8 +91,6 @@ export function SettingsModal({
               <option value="replicate">Replicate (권장)</option>
               <option value="fal">fal.ai (Kling·Minimax 등)</option>
               <option value="mock">Mock — 키 없이 데모/테스트</option>
-              <option value="kaiber">Kaiber (공개 API 없음 · 제휴 전용)</option>
-              <option value="higgsfield">Higgsfield (스텁)</option>
             </select>
           </Field>
           <Field label={`API 키 ${settings?.video_key_set ? "(설정됨 ✓)" : "(미설정)"}`}>

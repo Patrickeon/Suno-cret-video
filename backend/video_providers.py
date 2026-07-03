@@ -205,43 +205,14 @@ class MockProvider(VideoProvider):
         return out_path
 
 
-class KaiberProvider(_PollingHTTPProvider):
-    """⚠️ Kaiber 는 현재 공개 셀프서비스 개발자 API 를 제공하지 않는다
-    (2026-07 확인: kaiber.ai 에 API 문서·developer 포털 없음, 파트너 제휴 전용).
-    제휴로 사양을 받으면 아래 두 훅만 채우면 동작한다. 그 전까지는
-    같은 급 모델을 호스팅하는 fal.ai(FalProvider) 또는 Replicate 사용 권장."""
-    ENV_KEY = "KAIBER_API_KEY"
-    DEFAULT_BASE_URL = "https://api.kaiber.ai"  # TODO: 실제 베이스 URL 확인
-
-    def _submit(self, prompt, duration, aspect, **opts):
-        # TODO: 실제 Kaiber 생성 엔드포인트/페이로드로 교체
-        raise NotImplementedError(
-            "Kaiber API 사양(엔드포인트/페이로드)과 키를 받으면 여기서 작업을 제출하세요."
-        )
-
-    def _poll(self, job_id):
-        raise NotImplementedError("Kaiber 상태 조회 엔드포인트로 교체")
-
-
-class HiggsfieldProvider(_PollingHTTPProvider):
-    ENV_KEY = "HIGGSFIELD_API_KEY"
-    DEFAULT_BASE_URL = "https://api.higgsfield.ai"  # TODO: 실제 베이스 URL 확인
-
-    def _submit(self, prompt, duration, aspect, **opts):
-        raise NotImplementedError(
-            "Higgsfield API 사양과 키를 받으면 여기서 작업을 제출하세요."
-        )
-
-    def _poll(self, job_id):
-        raise NotImplementedError("Higgsfield 상태 조회 엔드포인트로 교체")
-
+# Kaiber / Higgsfield: 공개 셀프서비스 API 없음(2026-07 확인, 파트너 제휴 전용)이라
+# 스텁을 제거했다. 제휴로 사양을 받으면 _PollingHTTPProvider 를 상속해
+# _submit/_poll 두 훅만 채우면 된다 (FalProvider 참고).
 
 _PROVIDERS = {
     "replicate": ReplicateProvider,
     "fal": FalProvider,
     "mock": MockProvider,        # 키 불필요 (로컬 ffmpeg 데모/테스트)
-    "kaiber": KaiberProvider,    # 공개 API 없음 — 사양 확보 시 활성화
-    "higgsfield": HiggsfieldProvider,
 }
 
 
