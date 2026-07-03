@@ -12,9 +12,10 @@ Suno 등 AI로 만든 곡을 유튜브에 올릴 때 사용합니다.
 | ✨ **AI 편집 에이전트** | 자연어로 "쇼츠로 만들어줘" → Claude가 옵션 수정 → 재렌더 | `backend/agent.py` |
 
 핵심 기능:
-- 🎚️ 오디오 파형 / 스펙트럼 비주얼라이저
-- 📝 가사 자막 자동 싱크 (.lrc / .txt 균등분배 / AI 강제정렬)
-- 🖼️ 배경 이미지 켄 번스(줌·팬) + 다중 이미지 크로스페이드
+- 🎚️ 그라데이션+글로우 파형 / 막대 / 미니멀 라인 비주얼라이저 (색 팔레트 선택)
+- 🔤 귀엽고 가독성 좋은 동봉 폰트(주아·고운돋움, OFL) — 설치 불필요
+- 📝 가사 자막 자동 싱크 (.lrc / .txt 균등분배 / AI 강제정렬) — 소절 단위 페이드 인/아웃
+- 🖼️ 배경 이미지 켄 번스(줌·팬) + 다중 이미지 크로스페이드, 이미지 없으면 흐르는 그라데이션 배경
 - 📱 가로 1080p 롱폼 / 세로 9:16 쇼츠(클라이맥스 구간만) 출력
 - 🏷️ 1280×720 썸네일 + 워터마크/로고 자동 생성
 - 🤖 자연어 AI 편집 (Claude tool use, provider 교체 가능)
@@ -114,7 +115,15 @@ python make_mv.py --audio song.mp3 --lyrics draft.lrc --bg art.jpg --out mv.mp4
 | `--lyrics` | 가사 (.txt 또는 .lrc) |
 | `--bg a.jpg b.jpg ...` | 배경 이미지 (여러 장이면 크로스페이드) |
 | `--out` | 출력 mp4 (기본 mv.mp4) |
-| `--viz` | `waves`(기본) / `cqt` / `spectrum` / `none` |
+| `--viz` | `waves`(기본·글로우 파형) / `bars`(그라데이션 막대) / `line`(미니멀) / `cqt` / `spectrum` / `none` |
+| `--viz-color A B` | 비주얼라이저 그라데이션 색 1~2개 (RRGGBB, 기본 파스텔 하늘→핑크) |
+| `--bg-style` | 배경 이미지 없을 때 `gradient`(흐르는 그라데이션, 기본) / `solid`(단색) |
+| `--bg-grad A B C` | 그라데이션 배경 색 직접 지정 (기본: `--bg-color` 에서 자동 유도) |
+| `--no-sub-fade` | 소절 단위 자막 페이드 인/아웃 끄기 (기본 켜짐) |
+| `--sub-preview` | 다음 소절 미리보기 (현재 가사 아래 작고 흐리게) |
+| `--disc` | 💿 레코드 모드: 원형 앨범아트 회전 (`--disc-art`, 기본 첫 `--bg`) |
+| `--progress-bar` | 하단 곡 진행바 (파형 색과 통일) |
+| `--scrim` / `--no-scrim` | 하단 가독성 스크림 (기본: 배경 이미지/영상 있으면 자동) |
 | `--no-kenburns` | 배경 줌/팬 끄기 (기본 켜짐) |
 | `--shorts` | 세로 9:16 (1080×1920) 출력 |
 | `--clip-start` / `--clip-len` | 구간 추출 (`1:05` 또는 초, 기본 길이 30s) |
@@ -124,7 +133,8 @@ python make_mv.py --audio song.mp3 --lyrics draft.lrc --bg art.jpg --out mv.mp4
 | `--align auto` | stable-ts 가사 강제정렬 |
 | `--align-model` | 정렬 모델 (tiny/base/small/medium, 기본 base) |
 | `--lrc-out` | 초안 LRC만 만들고 종료 |
-| `--font` | 자막 폰트 (기본 Malgun Gothic) |
+| `--font` | 자막 폰트 (기본 동봉 주아체 `Jua`. `fonts/` 에 ttf 를 넣으면 바로 사용 가능) |
+| `--karaoke` | (옵션 기능) 노래방식 글자 색채움. 기본은 소절 단위 표시 |
 
 ---
 
@@ -166,6 +176,8 @@ Suno-cret-video/
 
 ## 변경 내역
 
+- **v0.5 — 연출 확장** : 💿 레코드 모드(원형 앨범아트 회전, `--disc`), 다음 소절 미리보기(`--sub-preview`), 하단 가독성 스크림(배경 이미지 시 자동), 곡 진행바(`--progress-bar`), AI 자동 팔레트(`/api/palette` — 가사 분위기로 파형/배경 색 추천).
+- **v0.4 — 디자인 개편** : 기본 폰트를 동봉 주아체(귀엽고 가독성 좋음)로 교체(`fonts/`, OFL), 파형을 그라데이션+글로우 룩으로 개편(`--viz-color` 팔레트), `line` 미니멀 비주얼라이저 추가, 배경 이미지가 없으면 흐르는 그라데이션 배경(`--bg-style`), 소절 단위 자막 페이드 기본화, 썸네일 디자인 개선(포인트 컬러 바).
 - **v0.3 — AI 편집 에이전트** : 자연어 → Claude tool use(`set_video_options`) → 옵션 패치 → 같은 자산으로 재렌더. `backend/agent.py` + `/api/agent` + 프론트 `AI 편집` 탭. provider 추상화로 교체 가능.
 - **v0.2 — 웹 스튜디오** : Next.js 프론트 + FastAPI 백엔드. 업로드→비동기 렌더 잡→미리보기/다운로드. (자세히: [STUDIO.md](STUDIO.md))
 - **v0.1 — 렌더 엔진(CLI)** : ffmpeg 비주얼라이저 + 가사 자막 + 켄번스 + 쇼츠/클립 추출 + 썸네일/워터마크 + 가사 정렬(.lrc/.txt/stable-ts).

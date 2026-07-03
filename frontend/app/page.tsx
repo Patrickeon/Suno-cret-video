@@ -17,6 +17,7 @@ import {
   Settings,
   SUGGESTIONS,
   Toast,
+  VIZ_PALETTES,
 } from "./lib/studio";
 
 let toastSeq = 0;
@@ -40,6 +41,12 @@ export default function Home() {
 
   // 옵션
   const [viz, setViz] = useState("waves");
+  const [vizColor, setVizColor] = useState(""); // ""=기본 파스텔 그라데이션
+  const [bgGrad, setBgGrad] = useState("");     // ""=bg_color 에서 자동 유도
+  const [disc, setDisc] = useState(false);       // 레코드(회전 앨범아트) 모드
+  const [progressBar, setProgressBar] = useState(false);
+  const [subPreview, setSubPreview] = useState(true); // 다음 소절 미리보기
+  const [paletteBusy, setPaletteBusy] = useState(false);
   const [shorts, setShorts] = useState(false);
   const [clipStart, setClipStart] = useState("");
   const [clipLen, setClipLen] = useState(30);
@@ -186,7 +193,8 @@ export default function Home() {
     const name = window.prompt("프리셋 이름을 입력하세요")?.trim();
     if (!name) return;
     const snap = {
-      viz, shorts, kenburns, bgColor, watermark, align, res, fps,
+      viz, vizColor, bgGrad, disc, progressBar, subPreview,
+      shorts, kenburns, bgColor, watermark, align, res, fps,
       normalize, master, karaoke, fadeIn, fadeOut, vignette, filmGrain,
       subColor, subSize, subPos, clipLen,
     };
@@ -201,6 +209,11 @@ export default function Home() {
     const str = (k: string, d: string) => (typeof s[k] === "string" ? (s[k] as string) : d);
     const num = (k: string, d: number) => (typeof s[k] === "number" ? (s[k] as number) : d);
     setViz(str("viz", "waves"));
+    setVizColor(str("vizColor", ""));
+    setBgGrad(str("bgGrad", ""));
+    setDisc(b("disc", false));
+    setProgressBar(b("progressBar", false));
+    setSubPreview(b("subPreview", true));
     setShorts(b("shorts", false));
     setKenburns(b("kenburns", true));
     setBgColor(str("bgColor", "0x0a0a14"));
@@ -266,6 +279,11 @@ export default function Home() {
       if (outroClip) fd.append("outro_clip", outroClip);
       fd.append("preview", String(preview));
       fd.append("viz", viz);
+      if (vizColor) fd.append("viz_color", vizColor);
+      if (bgGrad) fd.append("bg_grad", bgGrad);
+      fd.append("disc", String(disc));
+      fd.append("progress_bar", String(progressBar));
+      fd.append("sub_preview", String(subPreview));
       fd.append("shorts", String(shorts));
       fd.append("clip_start", clipStart);
       fd.append("clip_len", String(clipLen));
@@ -320,6 +338,11 @@ export default function Home() {
       bgFiles.forEach((b) => fd.append("bg", b));
       if (logoFile) fd.append("logo", logoFile);
       fd.append("viz", viz);
+      if (vizColor) fd.append("viz_color", vizColor);
+      if (bgGrad) fd.append("bg_grad", bgGrad);
+      fd.append("disc", String(disc));
+      fd.append("progress_bar", String(progressBar));
+      fd.append("sub_preview", String(subPreview));
       fd.append("res", res);
       fd.append("fps", String(fps));
       fd.append("kenburns", String(kenburns));
@@ -340,6 +363,40 @@ export default function Home() {
     refreshRecent();
     setAlbumBusy(false);
     toast("앨범 일괄 렌더가 시작됐어요. ‘최근 작업’에서 확인하세요.", "success");
+  }
+
+  async function aiPalette() {
+    // 가사(텍스트 입력 또는 업로드 파일)를 읽어 LLM에 색 추천을 요청
+    let lyrics = lyricsText.trim();
+    if (!lyrics && lyricsFile) {
+      try {
+        lyrics = (await lyricsFile.text()).trim();
+      } catch {
+        /* 파일 읽기 실패 시 제목만으로 진행 */
+      }
+    }
+    if (!lyrics && !title.trim()) {
+      toast("가사나 제목을 먼저 입력하세요.", "error");
+      return;
+    }
+    setPaletteBusy(true);
+    try {
+      const r = await fetch(`${API}/api/palette`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lyrics, title }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `서버 오류 (${r.status})`);
+      if (data.viz_color) setVizColor(String(data.viz_color));
+      if (data.bg_grad) setBgGrad(String(data.bg_grad));
+      if (data.viz) setViz(String(data.viz));
+      toast(`🎨 '${data.mood || "추천"}' 분위기 팔레트를 적용했어요.`, "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "팔레트 추천 실패", "error");
+    } finally {
+      setPaletteBusy(false);
+    }
   }
 
   async function translateLyrics() {
@@ -735,12 +792,13 @@ export default function Home() {
                 </div>
                 <Field label="자막 폰트">
                   <select value={font} onChange={(e) => setFont(e.target.value)} className={inputCls}>
-                    <option value="">기본 (맑은 고딕)</option>
+                    <option value="">기본 (주아체 · 귀여움)</option>
                     {fonts.map((f) => (
                       <option key={f.family} value={f.family}>{f.label}</option>
                     ))}
                   </select>
                 </Field>
+                <Toggle checked={subPreview} onChange={setSubPreview} label="👀 다음 소절 미리보기 (현재 가사 아래 작게)" />
                 <Toggle checked={subGlow} onChange={setSubGlow} label="✨ 자막 글로우 (발광)" />
               </Card>
 
@@ -749,11 +807,11 @@ export default function Home() {
                   <span className="text-xs font-medium text-[var(--text-dim)]">빠른 프리셋</span>
                   <div className="flex flex-wrap gap-2">
                     {PRESETS.map((p) => {
-                      const active = viz === p.viz && kenburns === p.kenburns && bgColor === p.bg;
+                      const active = viz === p.viz && vizColor === p.vizColor && kenburns === p.kenburns && bgColor === p.bg;
                       return (
                         <button
                           key={p.name}
-                          onClick={() => { setViz(p.viz); setKenburns(p.kenburns); setBgColor(p.bg); }}
+                          onClick={() => { setViz(p.viz); setVizColor(p.vizColor); setKenburns(p.kenburns); setBgColor(p.bg); }}
                           className={`rounded-full border px-3 py-1 text-xs transition ${
                             active
                               ? "border-indigo-400 bg-indigo-500/20 text-white"
@@ -803,14 +861,52 @@ export default function Home() {
                 )}
                 <Field label="비주얼라이저">
                   <select value={viz} onChange={(e) => setViz(e.target.value)} className={inputCls}>
-                    <option value="waves">파형 (waves)</option>
-                    <option value="bars">컬러 막대 (bars)</option>
+                    <option value="waves">✨ 글로우 파형 (기본 · 그라데이션+발광)</option>
+                    <option value="bars">📊 그라데이션 막대</option>
+                    <option value="line">➖ 미니멀 라인 (잔잔한 곡)</option>
                     <option value="cqt">막대 스펙트럼 (cqt)</option>
                     <option value="spectrum">스펙트럼 (spectrum)</option>
                     <option value="none">없음</option>
                   </select>
                 </Field>
+                {(viz === "waves" || viz === "bars") && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-[var(--text-dim)]">파형 색감</span>
+                      <button
+                        onClick={aiPalette}
+                        disabled={paletteBusy}
+                        title="가사 분위기에 맞는 색을 AI가 골라줘요 (API 키 필요)"
+                        className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1 text-[11px] text-[var(--text-dim)] transition hover:bg-[var(--surface-3)] disabled:opacity-50"
+                      >
+                        {paletteBusy ? "🎨 고르는 중…" : "🎨 AI 추천"}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {VIZ_PALETTES.map((p) => (
+                        <button
+                          key={p.label}
+                          onClick={() => setVizColor(p.id)}
+                          title={p.label}
+                          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition ${
+                            vizColor === p.id
+                              ? "border-indigo-400 bg-indigo-500/20 text-white"
+                              : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-dim)] hover:bg-[var(--surface-3)]"
+                          }`}
+                        >
+                          <span
+                            className="inline-block h-3 w-6 rounded-full"
+                            style={{ background: `linear-gradient(90deg, #${p.c[0]}, #${p.c[1]})` }}
+                          />
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <Toggle checked={kenburns} onChange={setKenburns} label="배경 켄 번스(줌·팬) 효과" />
+                <Toggle checked={disc} onChange={setDisc} label="💿 레코드 모드 (첫 배경 이미지가 원형으로 회전)" />
+                <Toggle checked={progressBar} onChange={setProgressBar} label="⏳ 곡 진행바 (하단 얇은 라인)" />
               </Card>
 
               <Card title="3. 포맷 / 메타" step="③">

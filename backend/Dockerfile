@@ -16,12 +16,10 @@ WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
-# 렌더 엔진 + 백엔드 코드
+# 렌더 엔진 + 동봉 폰트 + 백엔드 코드
 COPY make_mv.py ./make_mv.py
+COPY fonts/ ./fonts/
 COPY backend/ ./backend/
-
-# Linux 컨테이너에는 Malgun Gothic 이 없으므로 NanumGothic 사용
-ENV MV_FONT="NanumGothic"
 ENV PORT=8080
 
 WORKDIR /app/backend

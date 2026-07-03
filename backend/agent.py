@@ -60,8 +60,22 @@ EDIT_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
-            "viz": {"type": "string", "enum": ["waves", "cqt", "spectrum", "bars", "none"],
-                    "description": "비주얼라이저 종류 (bars=컬러풀 주파수 막대)"},
+            "viz": {"type": "string",
+                    "enum": ["waves", "bars", "line", "cqt", "spectrum", "none"],
+                    "description": "비주얼라이저: waves=글로우 파형(기본), bars=그라데이션 막대, "
+                                   "line=미니멀 라인(잔잔한 곡), cqt/spectrum=스펙트럼"},
+            "viz_color": {"type": "string",
+                          "description": "비주얼라이저 그라데이션 색 1~2개, 쉼표 구분 RRGGBB "
+                                         "(예: 'FDA4AF,FECDD3'=핑크, 곡 분위기에 맞춰 선택)"},
+            "bg_style": {"type": "string", "enum": ["gradient", "solid"],
+                         "description": "배경 이미지가 없을 때: gradient=흐르는 그라데이션(기본), solid=단색"},
+            "bg_grad": {"type": "string",
+                        "description": "그라데이션 배경 색 2~3개, 쉼표 구분 RRGGBB (어두운 톤 권장)"},
+            "disc": {"type": "boolean",
+                     "description": "레코드 모드: 원형 앨범아트(첫 배경 이미지)가 중앙에서 회전"},
+            "progress_bar": {"type": "boolean", "description": "하단 곡 진행바"},
+            "sub_preview": {"type": "boolean",
+                            "description": "다음 소절 미리보기 (현재 가사 아래 작고 흐리게)"},
             "shorts": {"type": "boolean", "description": "세로 9:16 쇼츠 여부"},
             "clip_start": {"type": "string",
                            "description": "클립 시작 시각 'mm:ss' 또는 초. 전체면 빈 문자열"},
@@ -111,6 +125,54 @@ EDIT_SYSTEM = """당신은 뮤직비디오 편집 어시스턴트입니다.
 - "원래대로/전체로 되돌려"처럼 해제 요청이면 해당 필드를 기본값으로(clip_start="", shorts=false 등) 설정하세요.
 - clip_start는 'mm:ss' 또는 초 문자열이며 빈 문자열이면 곡 전체입니다.
 - bg_color는 배경 이미지가 없을 때만 의미가 있습니다."""
+
+
+# ─────────────────────────────────────────────────────────────
+# AI 자동 팔레트 — 가사 분위기 -> 파형/배경 색 추천
+# ─────────────────────────────────────────────────────────────
+
+PALETTE_TOOL = {
+    "name": "set_palette",
+    "description": "곡 분위기에 맞는 뮤직비디오 색 팔레트를 지정한다.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "viz_color": {"type": "string",
+                          "description": "비주얼라이저 그라데이션 색 2개, 쉼표 구분 RRGGBB "
+                                         "(예: '7DD3FC,F0ABFC'). 밝고 채도 있는 파스텔~네온 톤"},
+            "bg_grad": {"type": "string",
+                        "description": "배경 그라데이션 색 3개, 쉼표 구분 RRGGBB. "
+                                       "어두운 톤(자막 가독성), viz_color 와 조화"},
+            "viz": {"type": "string", "enum": ["waves", "bars", "line"],
+                    "description": "어울리는 비주얼라이저 (잔잔=line, 기본=waves, 신남=bars)"},
+            "mood": {"type": "string", "description": "분위기 한 단어 (예: 몽환적, 신나는)"},
+        },
+        "required": ["viz_color", "bg_grad", "mood"],
+    },
+}
+
+PALETTE_SYSTEM = """당신은 뮤직비디오 아트디렉터입니다. 곡 제목과 가사의 분위기를 읽고
+set_palette 도구로 어울리는 색 팔레트를 지정하세요.
+- viz_color: 화면에서 빛나는 파형 색 — 밝은 파스텔/네온 2색 그라데이션.
+- bg_grad: 배경 3색 — 어둡게 유지해 흰 자막이 잘 읽히게 (밝기 낮은 딥 톤).
+반드시 도구를 호출하세요."""
+
+
+def suggest_palette(title, lyrics, provider_name="claude", model=None, api_key=None):
+    """곡 정보 -> {viz_color, bg_grad, viz, mood}. 도구 미호출 시 빈 dict."""
+    kw = {}
+    if model:
+        kw["model"] = model
+    if api_key:
+        kw["api_key"] = api_key
+    provider = get_provider(provider_name, **kw)
+    user = (f"제목: {title or '(미정)'}\n\n가사:\n{(lyrics or '(없음)')[:2000]}")
+    resp = provider.chat(PALETTE_SYSTEM, [{"role": "user", "content": user}],
+                         tools=[PALETTE_TOOL])
+    for b in resp.content:
+        if b.type == "tool_use" and b.name == "set_palette":
+            return dict(b.input or {})
+    return {}
 
 
 # ─────────────────────────────────────────────────────────────

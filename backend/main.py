@@ -213,6 +213,12 @@ async def create_render(
     outro_clip: Optional[UploadFile] = File(None),
     lyrics_text: str = Form(""),
     viz: str = Form("waves"),
+    viz_color: str = Form(""),
+    bg_style: str = Form("gradient"),
+    bg_grad: str = Form(""),
+    disc: bool = Form(False),
+    progress_bar: bool = Form(False),
+    sub_preview: bool = Form(False),
     shorts: bool = Form(False),
     clip_start: str = Form(""),
     clip_len: float = Form(30),
@@ -305,6 +311,12 @@ async def create_render(
 
     opts = {
         "viz": viz,
+        "viz_color": viz_color,
+        "bg_style": bg_style,
+        "bg_grad": bg_grad,
+        "disc": disc,
+        "progress_bar": progress_bar,
+        "sub_preview": sub_preview,
         "shorts": shorts,
         "clip_start": clip_start,
         "clip_len": clip_len,
@@ -481,6 +493,32 @@ def metadata(body: MetaBody):
     if not md:
         return JSONResponse({"error": "메타데이터를 생성하지 못했습니다."}, status_code=500)
     return md
+
+
+class PaletteBody(BaseModel):
+    lyrics: str = ""
+    title: str = ""
+
+
+@app.post("/api/palette")
+def palette(body: PaletteBody):
+    """가사/제목 분위기 -> 파형·배경 색 팔레트 추천 (LLM)."""
+    llm_key = settings.get_key("llm_api_key")
+    if not llm_key:
+        return JSONResponse(
+            {"error": "AI 키가 없습니다. ⚙️ 설정에서 Claude API 키를 입력하세요."},
+            status_code=400,
+        )
+    cfg = settings.get_raw()
+    try:
+        pal = agent.suggest_palette(
+            body.title, body.lyrics, provider_name=cfg["llm_provider"],
+            model=cfg["llm_model"], api_key=llm_key)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"팔레트 추천 오류: {e}"}, status_code=500)
+    if not pal:
+        return JSONResponse({"error": "팔레트를 추천하지 못했습니다."}, status_code=500)
+    return pal
 
 
 class BatchBody(BaseModel):

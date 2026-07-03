@@ -5,6 +5,15 @@ libass 는 family 이름으로 폰트를 찾으므로 (label, family) 를 돌려
 import glob
 import os
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_BUNDLED_DIR = os.path.join(_ROOT, "fonts")
+
+# 리포 동봉 폰트 (fonts/, OFL) — 설치 불필요, 어디서든 동일하게 렌더됨
+_BUNDLED = [
+    ("주아 (둥글둥글 귀여움 · 기본)", "Jua", "Jua-Regular.ttf"),
+    ("고운돋움 (부드럽고 깔끔)", "Gowun Dodum", "GowunDodum-Regular.ttf"),
+]
+
 _DIRS = [
     "C:/Windows/Fonts",
     "/usr/share/fonts",
@@ -42,8 +51,10 @@ def _exists(files):
 
 
 def list_fonts():
-    out = [{"label": lbl, "family": fam}
-           for (lbl, fam, files) in _CANDIDATES if _exists(files)]
-    if not any(f["family"] == "Malgun Gothic" for f in out):
-        out.insert(0, {"label": "맑은 고딕", "family": "Malgun Gothic"})
+    out = [{"label": lbl, "family": fam} for (lbl, fam, fn) in _BUNDLED
+           if os.path.exists(os.path.join(_BUNDLED_DIR, fn))]
+    out += [{"label": lbl, "family": fam}
+            for (lbl, fam, files) in _CANDIDATES if _exists(files)]
+    if not out:
+        out.append({"label": "맑은 고딕", "family": "Malgun Gothic"})
     return out

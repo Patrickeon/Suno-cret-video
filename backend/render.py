@@ -23,6 +23,27 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--bg"] + bg_list
 
     cmd += ["--viz", opts.get("viz", "waves")]
+    viz_color = opts.get("viz_color")
+    if viz_color:
+        # "AABBCC,DDEEFF" / 리스트 모두 허용
+        if isinstance(viz_color, str):
+            viz_color = [c for c in viz_color.replace(",", " ").split() if c]
+        if viz_color:
+            cmd += ["--viz-color"] + [str(c) for c in viz_color]
+    if opts.get("bg_style") and opts["bg_style"] != "gradient":
+        cmd += ["--bg-style", str(opts["bg_style"])]
+    bg_grad = opts.get("bg_grad")
+    if bg_grad:
+        if isinstance(bg_grad, str):
+            bg_grad = [c for c in bg_grad.replace(",", " ").split() if c]
+        if bg_grad:
+            cmd += ["--bg-grad"] + [str(c) for c in bg_grad]
+    if opts.get("disc"):
+        cmd += ["--disc"]
+    if opts.get("progress_bar"):
+        cmd += ["--progress-bar"]
+    if opts.get("sub_preview"):
+        cmd += ["--sub-preview"]
 
     if opts.get("shorts"):
         cmd += ["--shorts"]

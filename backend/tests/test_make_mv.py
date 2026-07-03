@@ -101,3 +101,76 @@ def test_read_txt_strips_bom(tmp_path):
     p.write_bytes("﻿첫줄\n둘째\n".encode("utf-8"))
     lines = mv.read_txt_lines(str(p))
     assert lines[0] == "첫줄"  # BOM 제거됨
+
+
+def test_norm_hex_forms():
+    assert mv.norm_hex("#7dd3fc") == "7DD3FC"
+    assert mv.norm_hex("0xF0ABFC") == "F0ABFC"
+    assert mv.norm_hex("nope", "AABBCC") == "AABBCC"
+
+
+def test_derive_bg_grad_returns_three_hex():
+    cols = mv.derive_bg_grad("0x0a0a14")
+    assert len(cols) == 3
+    for c in cols:
+        assert len(c) == 6 and int(c, 16) >= 0
+    # 색명 등 파싱 불가 입력은 기본 팔레트로
+    assert mv.derive_bg_grad("black") == mv.DEFAULT_BG_GRAD
+
+
+def test_build_viz_waves_gradient_glow_labels():
+    lay = mv.get_layout(False)
+    parts, labels = mv.build_viz("1:a", lay, "waves")
+    assert labels == ["[vglow]", "[vsharp]"]
+    joined = ";".join(parts)
+    assert "gradients=" in joined and "alphamerge" in joined and "gblur" in joined
+
+
+def test_build_viz_line_single_label():
+    lay = mv.get_layout(False)
+    parts, labels = mv.build_viz("1:a", lay, "line")
+    assert labels == ["[viz]"]
+    assert "p2p" in parts[0]
+
+
+def test_build_bg_gradient_default_and_solid():
+    lay = mv.get_layout(False)
+    _, parts, lbl, n = mv.build_bg(None, lay, 10.0, True, "0x0a0a14")
+    assert lbl == "[bg]" and n == 0
+    assert "gradients=" in parts[0]
+    _, parts, _, _ = mv.build_bg(None, lay, 10.0, True, "0x0a0a14", bg_style="solid")
+    assert parts[0].startswith("color=c=0x0a0a14")
+
+
+def test_write_ass_fade_and_bundled_bold(tmp_path):
+    lay = mv.get_layout(False)
+    p = tmp_path / "s.ass"
+    mv.write_ass([(0.0, 2.0, "안녕")], str(p), lay, font="Jua")
+    txt = p.read_text(encoding="utf-8")
+    assert "\\fad(200,260)" in txt
+    # 동봉 라운드 폰트는 합성 볼드 없이 (Bold=0)
+    assert ",0,0,0,0,100,100," in txt
+    mv.write_ass([(0.0, 2.0, "안녕")], str(p), lay, font="Jua", fade=False)
+    assert "\\fad" not in p.read_text(encoding="utf-8")
+
+
+def test_write_ass_preview_next_line(tmp_path):
+    lay = mv.get_layout(False)
+    p = tmp_path / "s.ass"
+    cues = [(0.0, 2.0, "첫 줄"), (2.0, 4.0, "둘째 줄")]
+    mv.write_ass(cues, str(p), lay, preview=True)
+    txt = p.read_text(encoding="utf-8")
+    assert "Style: Next," in txt
+    # 첫 줄이 나오는 동안 둘째 줄이 Next 스타일로 미리 보임
+    assert "Next,,0,0,0," in txt and txt.count("Dialogue:") == 3
+    # middle 정렬에선 미리보기 생략
+    mv.write_ass(cues, str(p), lay, preview=True, pos="middle")
+    assert "Style: Next," not in p.read_text(encoding="utf-8")
+
+
+def test_disc_diameter_even_and_orientation():
+    d_land = mv.disc_diameter(mv.get_layout(False))
+    d_short = mv.disc_diameter(mv.get_layout(True))
+    assert d_land % 2 == 0 and d_short % 2 == 0
+    assert d_land == int(1080 * 0.42) - (int(1080 * 0.42) % 2)
+    assert d_short == int(1080 * 0.55) - (int(1080 * 0.55) % 2)

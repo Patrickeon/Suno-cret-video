@@ -54,11 +54,22 @@ export const BG_PRESETS = [
   { id: "dusk", label: "더스크" },
 ];
 
+// 비주얼라이저 그라데이션 팔레트 (RRGGBB 2색). ""=기본 파스텔.
+export const VIZ_PALETTES = [
+  { id: "", label: "파스텔 드림", c: ["7DD3FC", "F0ABFC"] },
+  { id: "FDA4AF,F9A8D4", label: "핑크 캔디", c: ["FDA4AF", "F9A8D4"] },
+  { id: "6EE7B7,67E8F9", label: "민트 소다", c: ["6EE7B7", "67E8F9"] },
+  { id: "FCA5A5,FCD34D", label: "선셋", c: ["FCA5A5", "FCD34D"] },
+  { id: "A5B4FC,C4B5FD", label: "라벤더", c: ["A5B4FC", "C4B5FD"] },
+  { id: "FFFFFF,E5E7EB", label: "모노", c: ["FFFFFF", "E5E7EB"] },
+];
+
 export const PRESETS = [
-  { name: "Lo-fi", emoji: "🌙", viz: "waves", kenburns: true, bg: "0x12101a" },
-  { name: "발라드", emoji: "🎹", viz: "spectrum", kenburns: true, bg: "0x0a0a14" },
-  { name: "EDM", emoji: "⚡", viz: "cqt", kenburns: true, bg: "0x05010f" },
-  { name: "미니멀", emoji: "◾", viz: "none", kenburns: false, bg: "0x000000" },
+  { name: "포근", emoji: "🧸", viz: "waves", vizColor: "", kenburns: true, bg: "0x1a1424" },
+  { name: "Lo-fi", emoji: "🌙", viz: "waves", vizColor: "A5B4FC,C4B5FD", kenburns: true, bg: "0x12101a" },
+  { name: "발라드", emoji: "🎹", viz: "line", vizColor: "FFFFFF,E5E7EB", kenburns: true, bg: "0x0a0a14" },
+  { name: "EDM", emoji: "⚡", viz: "bars", vizColor: "FCA5A5,FCD34D", kenburns: true, bg: "0x05010f" },
+  { name: "미니멀", emoji: "◾", viz: "none", vizColor: "", kenburns: false, bg: "0x000000" },
 ];
 
 export const MODELS = [
@@ -69,8 +80,8 @@ export const MODELS = [
 
 export const SUGGESTIONS = [
   "쇼츠 세로형으로 만들어줘",
-  "막대 스펙트럼으로 바꿔줘",
-  "배경 켄번스 꺼줘",
+  "파형을 핑크색으로 바꿔줘",
+  "잔잔한 느낌의 미니멀 라인으로",
   "후렴부터 30초만 잘라줘",
 ];
 

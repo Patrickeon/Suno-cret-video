@@ -94,3 +94,20 @@ def test_generate_metadata_no_tool_returns_empty(monkeypatch):
     fake = _FakeProvider([_Resp([_Blk(type="text", text="음...")])])
     monkeypatch.setattr(agent, "get_provider", lambda *a, **k: fake)
     assert agent.generate_metadata("곡", "a", "가사", api_key="x") == {}
+
+
+def test_suggest_palette(monkeypatch):
+    pal = {"viz_color": "FDA4AF,F9A8D4", "bg_grad": "1A0F1E,2D1B3A,12212E",
+           "viz": "waves", "mood": "몽환적"}
+    tool = _Blk(type="tool_use", id="p1", name="set_palette", input=pal)
+    fake = _FakeProvider([_Resp([tool])])
+    monkeypatch.setattr(agent, "get_provider", lambda *a, **k: fake)
+    out = agent.suggest_palette("달빛 산책", "별빛이 흐르는 밤", api_key="x")
+    assert out["viz_color"] == "FDA4AF,F9A8D4"
+    assert out["mood"] == "몽환적"
+
+
+def test_edit_tool_schema_has_design_fields():
+    props = agent.EDIT_TOOL["input_schema"]["properties"]
+    for k in ("viz_color", "bg_style", "bg_grad", "disc", "progress_bar", "sub_preview"):
+        assert k in props

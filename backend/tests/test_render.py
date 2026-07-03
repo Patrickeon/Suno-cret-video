@@ -124,3 +124,35 @@ def test_subtitle_defaults_omitted():
     assert "--sub-color" not in cmd
     assert "--sub-size" not in cmd
     assert "--sub-pos" not in cmd
+
+
+def test_viz_color_string_and_list():
+    cmd = _build({"viz_color": "FDA4AF,F9A8D4"})
+    i = cmd.index("--viz-color")
+    assert cmd[i + 1] == "FDA4AF" and cmd[i + 2] == "F9A8D4"
+    cmd = _build({"viz_color": ["7DD3FC"]})
+    assert cmd[cmd.index("--viz-color") + 1] == "7DD3FC"
+
+
+def test_viz_color_omitted_when_empty():
+    assert "--viz-color" not in _build({"viz_color": ""})
+
+
+def test_bg_style_solid_forwarded_gradient_omitted():
+    assert "--bg-style" not in _build({"bg_style": "gradient"})
+    cmd = _build({"bg_style": "solid"})
+    assert cmd[cmd.index("--bg-style") + 1] == "solid"
+
+
+def test_new_design_flags_forwarded():
+    cmd = _build({"disc": True, "progress_bar": True, "sub_preview": True,
+                  "bg_grad": "0B0F26,241B4D,0D2C44"})
+    assert "--disc" in cmd and "--progress-bar" in cmd and "--sub-preview" in cmd
+    i = cmd.index("--bg-grad")
+    assert cmd[i + 1:i + 4] == ["0B0F26", "241B4D", "0D2C44"]
+
+
+def test_new_design_flags_omitted_by_default():
+    cmd = _build({})
+    for flag in ("--disc", "--progress-bar", "--sub-preview", "--bg-grad"):
+        assert flag not in cmd

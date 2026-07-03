@@ -31,39 +31,92 @@ import subprocess
 import sys
 
 FPS = 30
-# 폰트 패밀리명. 기본은 Windows의 Malgun Gothic, 컨테이너(Linux)에선 MV_FONT 로 교체
-# (예: 도커에서 NanumGothic). drawtext/libass 모두 fontconfig 패밀리명으로 해석.
-_DEFAULT_FONT = os.environ.get("MV_FONT", "Malgun Gothic")
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+FONTS_DIR = os.path.join(ROOT_DIR, "fonts")
+
+# 리포 동봉 폰트 (fonts/, OFL): 시스템 설치 없이 어디서든 동일한 룩.
+# 기본은 둥글둥글 귀엽고 가독성 좋은 '주아(Jua)'.
+_BUNDLED_FONTS = {
+    "Jua": "Jua-Regular.ttf",
+    "Gowun Dodum": "GowunDodum-Regular.ttf",
+}
+
+
+def bundled_font_file(family):
+    f = _BUNDLED_FONTS.get(family)
+    if f:
+        p = os.path.join(FONTS_DIR, f)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+# 폰트 패밀리명. 우선순위: MV_FONT 환경변수 > 동봉 Jua > Malgun Gothic.
+# (컨테이너에선 MV_FONT=NanumGothic 등으로 교체 가능. libass 는 fontsdir 로
+#  동봉 폰트를 직접 읽으므로 fontconfig 설정이 없어도 된다.)
+_DEFAULT_FONT = os.environ.get("MV_FONT") or (
+    "Jua" if bundled_font_file("Jua") else "Malgun Gothic")
 DRAW_FONT = _DEFAULT_FONT   # drawtext(워터마크/썸네일)용
 SUB_FONT = _DEFAULT_FONT    # libass(자막)용
+
+_SYSTEM_FONT_CANDS = [
+    "C:/Windows/Fonts/malgun.ttf",              # Windows
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",   # Debian/Ubuntu
+    "/usr/share/fonts/nanum/NanumGothic.ttf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",        # macOS
+]
 
 
 def _resolve_fontfile():
     """drawtext 용 폰트 파일 절대경로. fontconfig 미설정 환경(Windows/컨테이너)에서
     font=패밀리 해석이 실패해 한글이 깨지므로 fontfile 을 직접 지정한다."""
-    cands = [os.environ.get("MV_FONTFILE")]
-    cands += [
-        "C:/Windows/Fonts/malgun.ttf",              # Windows
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",   # Debian/Ubuntu
-        "/usr/share/fonts/nanum/NanumGothic.ttf",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",        # macOS
-    ]
+    cands = [os.environ.get("MV_FONTFILE"),
+             bundled_font_file(_DEFAULT_FONT)] + _SYSTEM_FONT_CANDS
     for c in cands:
         if c and os.path.exists(c):
             return c
     return None
 
 
+def _resolve_symbol_fontfile():
+    """♪ 등 기호용 폰트. 동봉 Jua 엔 ♪(U+266A) 글리프가 없어 시스템 폰트를 쓴다."""
+    for c in _SYSTEM_FONT_CANDS:
+        if os.path.exists(c):
+            return c
+    return None
+
+
 DRAW_FONTFILE = _resolve_fontfile()
+SYMBOL_FONTFILE = _resolve_symbol_fontfile()
+
+
+def _fontfile_token(path):
+    # filtergraph 에서 Windows 경로 콜론은 작은따옴표+이스케이프해야 파싱된다.
+    p = path.replace("\\", "/").replace(":", "\\:")
+    return f"fontfile='{p}'"
 
 
 def draw_font_spec():
-    """drawtext 필터의 폰트 지정 토큰. fontfile 우선(콜론 이스케이프), 없으면 family."""
+    """drawtext 필터의 폰트 지정 토큰. fontfile 우선, 없으면 family."""
     if DRAW_FONTFILE:
-        # filtergraph 에서 Windows 경로 콜론은 작은따옴표+이스케이프해야 파싱된다.
-        p = DRAW_FONTFILE.replace("\\", "/").replace(":", "\\:")
-        return f"fontfile='{p}'"
+        return _fontfile_token(DRAW_FONTFILE)
     return f"font={DRAW_FONT}"
+
+
+def symbol_font_spec():
+    """drawtext 기호(♪)용 폰트 토큰."""
+    if SYMBOL_FONTFILE:
+        return _fontfile_token(SYMBOL_FONTFILE)
+    return draw_font_spec()
+
+
+def subtitles_filter(ass_name):
+    """subtitles 필터 문자열. 동봉 fonts/ 를 libass fontsdir 로 등록한다."""
+    f = f"subtitles={ass_name}"
+    if os.path.isdir(FONTS_DIR):
+        p = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+        f += f":fontsdir='{p}'"
+    return f
 
 # ---------- ffmpeg helpers ----------
 
@@ -293,8 +346,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Lyric,{font},{fontsize},{primary},{secondary},&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,4,2,{align},{mlr},{mlr},{marginv},1
-
+Style: Lyric,{font},{fontsize},{primary},{secondary},&H00101010,&H80000000,{bold},0,0,0,100,100,0,0,1,3,1,{align},{mlr},{mlr},{marginv},1
+{extra_styles}
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
@@ -324,7 +377,7 @@ def karaoke_text(text, dur):
 
 
 def write_ass(cues, path, lay, font=SUB_FONT, color="FFFFFF", size_mult=1.0,
-              pos="bottom", karaoke=False, glow=False):
+              pos="bottom", karaoke=False, glow=False, fade=True, preview=False):
     fontsize = max(1, int(round(lay["font_size"] * float(size_mult))))
     align = {"bottom": 2, "middle": 5, "top": 8}.get(pos, 2)
     if pos == "top":
@@ -335,33 +388,100 @@ def write_ass(cues, path, lay, font=SUB_FONT, color="FFFFFF", size_mult=1.0,
         marginv = lay["margin_v"]
     # 카라오케: 아직 안 부른 글자는 어둡게(Secondary), 부른 글자는 색(Primary)
     secondary = "&H00555555" if karaoke else "&H000088FF"
+    # 동봉 라운드 폰트(Jua 등)는 이미 두꺼워 합성 볼드를 빼야 모양이 산다
+    bold = 0 if font in _BUNDLED_FONTS else 1
+
+    # 다음 소절 미리보기: 현재 줄 아래 작고 반투명하게 (middle 정렬에선 생략)
+    preview = preview and pos != "middle"
+    extra_styles = ""
+    if preview:
+        next_size = max(1, int(round(fontsize * 0.52)))
+        gap = int(round(fontsize * 1.5))
+        next_mv = marginv + gap if pos == "top" else max(10, marginv - gap)
+        next_primary = "&H82" + hex_to_ass(color)[4:]  # 같은 색, ~50% 투명
+        extra_styles = (
+            f"Style: Next,{font},{next_size},{next_primary},{secondary},"
+            f"&H82101010,&H80000000,{bold},0,0,0,100,100,0,0,1,2,0,"
+            f"{align},{lay['margin_lr']},{lay['margin_lr']},{next_mv},1\n")
+
     with open(path, "w", encoding="utf-8") as f:
         f.write(ASS_HEADER.format(
             W=lay["W"], H=lay["H"], font=font, fontsize=fontsize,
-            mlr=lay["margin_lr"], marginv=marginv,
+            mlr=lay["margin_lr"], marginv=marginv, bold=bold,
             primary=hex_to_ass(color), secondary=secondary, align=align,
+            extra_styles=extra_styles,
         ))
-        for start, end, text in cues:
+        for i, (start, end, text) in enumerate(cues):
             if end <= start:
                 end = start + 0.5
             # '||' 는 자막 내 줄바꿈(이중 자막: 원문||번역)으로 처리
             body = (karaoke_text(text, end - start) if karaoke
                     else ass_escape(text).replace("||", "\\N"))
+            tags = ""
+            if fade:
+                # 소절 단위로 스르륵 나타났다 사라지는 페이드
+                tags += "\\fad(200,260)"
             if glow:
-                body = "{\\blur5}" + body  # 은은한 발광
+                tags += "\\blur5"  # 은은한 발광
+            if tags:
+                body = "{" + tags + "}" + body
             f.write(
                 f"Dialogue: 0,{fmt_ass_time(start)},{fmt_ass_time(end)},"
                 f"Lyric,,0,0,0,,{body}\n"
             )
+            if preview and i + 1 < len(cues):
+                nxt = ass_escape(cues[i + 1][2]).replace("||", "\\N")
+                ntags = "{\\fad(200,200)}" if fade else ""
+                f.write(
+                    f"Dialogue: 0,{fmt_ass_time(start)},{fmt_ass_time(end)},"
+                    f"Next,,0,0,0,,{ntags}{nxt}\n"
+                )
 
 # ---------- 필터 빌더 ----------
 
-def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None):
+def norm_hex(c, default=None):
+    """'#RRGGBB' / '0xRRGGBB' / 'RRGGBB' -> 'RRGGBB'(대문자). 잘못되면 default."""
+    s = str(c or "").strip().lstrip("#")
+    if s.lower().startswith("0x"):
+        s = s[2:]
+    if len(s) != 6:
+        return default
+    try:
+        int(s, 16)
+    except ValueError:
+        return default
+    return s.upper()
+
+
+# 배경 그라데이션 기본 팔레트 — 딥 네이비 -> 보랏빛 -> 어두운 청록 (은은한 오로라)
+DEFAULT_BG_GRAD = ["0B0F26", "241B4D", "0D2C44"]
+
+
+def derive_bg_grad(bg_color):
+    """단색 bg_color 를 기준으로 어울리는 3색 그라데이션 팔레트를 만든다."""
+    import colorsys
+    s = norm_hex(bg_color)
+    if not s:
+        return DEFAULT_BG_GRAD
+    r, g, b = (int(s[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    h, l, sa = colorsys.rgb_to_hls(r, g, b)
+
+    def hx(h2, l2, s2):
+        rr, gg, bb = colorsys.hls_to_rgb(
+            h2 % 1.0, min(0.9, max(0.03, l2)), min(1.0, max(0.25, s2)))
+        return f"{int(rr*255):02X}{int(gg*255):02X}{int(bb*255):02X}"
+
+    return [hx(h, l, sa), hx(h + 0.09, l + 0.10, sa + 0.25),
+            hx(h - 0.07, l + 0.05, sa + 0.20)]
+
+
+def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
+             bg_style="gradient", bg_grad=None):
     """
     배경 비디오 체인 빌드.
     반환: (extra_inputs, filter_parts, bg_label, audio_idx)
       extra_inputs: 배경 입력 -i 인자 리스트(앞쪽). audio_idx = 배경 입력 개수.
-    우선순위: video_bg(영상) > bg_list(이미지) > 단색.
+    우선순위: video_bg(영상) > bg_list(이미지) > 그라데이션/단색.
     """
     W, H = lay["W"], lay["H"]
 
@@ -375,7 +495,16 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None):
         return inputs, parts, "[bg]", 1
 
     if not bg_list:
-        return [], [f"color=c={bg_color}:s={W}x{H}:r={FPS}[bg]"], "[bg]", 0
+        if bg_style == "solid":
+            return [], [f"color=c={bg_color}:s={W}x{H}:r={FPS}[bg]"], "[bg]", 0
+        # 은은하게 흐르는 그라데이션 배경 (단색보다 훨씬 덜 밋밋함)
+        cols = [norm_hex(c) for c in (bg_grad or [])]
+        cols = [c for c in cols if c] or derive_bg_grad(bg_color)
+        cparams = ":".join(f"c{i}=0x{c}" for i, c in enumerate(cols))
+        return [], [
+            f"gradients=s={W}x{H}:{cparams}:nb_colors={len(cols)}:"
+            f"speed=0.008:r={FPS},format=yuv420p[bg]"
+        ], "[bg]", 0
 
     inputs = []
     parts = []
@@ -394,7 +523,7 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None):
         else:
             parts.append(
                 f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
-                f"crop={W}:{H},setsar=1[bg]"
+                f"crop={W}:{H},setsar=1,fps={FPS}[bg]"
             )
         return inputs, parts, "[bg]", 1
 
@@ -427,33 +556,95 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None):
         prev = out_lbl
     return inputs, parts, "[bg]", n
 
-def build_viz(audio_spec, lay, viz):
-    """비주얼라이저 체인. 반환: (parts, viz_label or None)"""
+# 비주얼라이저 기본 그라데이션 — 파스텔 스카이 -> 연보라 핑크 (드리미한 느낌)
+DEFAULT_VIZ_COLORS = ["7DD3FC", "F0ABFC"]
+
+
+def _viz_gradient_glow(raw_label, parts, W, h, colors):
+    """흰색 비주얼라이저를 알파 마스크로 써서 그라데이션 색을 입히고,
+    블러 글로우(밑) + 선명한 본체(위) 두 레이어를 만든다.
+    요즘 lyric video 채널들의 '네온 글로우' 룩."""
+    c = [norm_hex(x) for x in (colors or [])]
+    c = [x for x in c if x] or list(DEFAULT_VIZ_COLORS)
+    if len(c) == 1:
+        c = c * 2
+    parts.append(f"{raw_label}format=rgba,alphaextract[vmask]")
+    parts.append(
+        f"gradients=s={W}x{h}:c0=0x{c[0]}:c1=0x{c[1]}:"
+        f"x0=0:y0={h // 2}:x1={W}:y1={h // 2}:speed=0.006:r={FPS}[vgrad]")
+    parts.append("[vgrad][vmask]alphamerge[vcol]")
+    parts.append("[vcol]split[vsharp][vsoft]")
+    parts.append("[vsoft]gblur=sigma=12[vglow]")
+    return ["[vglow]", "[vsharp]"]
+
+
+def build_viz(audio_spec, lay, viz, colors=None):
+    """비주얼라이저 체인. 반환: (parts, overlay_labels) — 라벨 순서대로 배경 위에 겹친다."""
     W = lay["W"]
     h = lay["viz_h"]
+    parts = []
     if viz == "none":
-        return [], None
+        return [], []
     if viz == "waves":
-        return [f"[{audio_spec}]showwaves=s={W}x{h}:mode=cline:"
-                f"colors=white@0.85:rate={FPS},format=yuva420p[viz]"], "[viz]"
+        # 부드러운 중앙 대칭 파형 + 그라데이션 + 글로우 (기본)
+        parts.append(f"[{audio_spec}]showwaves=s={W}x{h}:mode=cline:"
+                     f"colors=white:rate={FPS}[vraw]")
+        labels = _viz_gradient_glow("[vraw]", parts, W, h, colors)
+        return parts, labels
+    if viz == "bars":
+        # 주파수 막대 — 같은 그라데이션+글로우 룩으로 통일
+        parts.append(f"[{audio_spec}]showfreqs=s={W}x{h}:mode=bar:ascale=log:"
+                     f"fscale=log:win_size=1024:colors=white:rate={FPS}[vraw]")
+        labels = _viz_gradient_glow("[vraw]", parts, W, h, colors)
+        return parts, labels
+    if viz == "line":
+        # 미니멀: 얇은 반투명 라인 파형 (잔잔한 곡용)
+        lh = max(2, (h * 3 // 5) - ((h * 3 // 5) % 2))
+        parts.append(f"[{audio_spec}]showwaves=s={W}x{lh}:mode=p2p:"
+                     f"colors=white@0.75:rate={FPS},format=yuva420p[viz]")
+        return parts, ["[viz]"]
     if viz == "cqt":
         return [f"[{audio_spec}]showcqt=s={W}x{h}:count=2:gamma=4,"
-                "format=yuva420p[viz]"], "[viz]"
+                "format=yuva420p[viz]"], ["[viz]"]
     if viz == "spectrum":
         return [f"[{audio_spec}]showspectrum=s={W}x{h}:mode=combined:"
-                "color=intensity:scale=cbrt:slide=scroll,format=yuva420p[viz]"], "[viz]"
-    if viz == "bars":
-        # 주파수 막대그래프 (음악에 반응) — 컬러풀하고 선명해 가사 영상에 잘 맞음
-        return [f"[{audio_spec}]showfreqs=s={W}x{h}:mode=bar:ascale=log:"
-                f"fscale=log:win_size=2048:colors=0x6d28d9|0xec4899:rate={FPS},"
-                "format=yuva420p[viz]"], "[viz]"
-    return [], None
+                "color=intensity:scale=cbrt:slide=scroll,format=yuva420p[viz]"], ["[viz]"]
+    return [], []
 
 # ---------- 텍스트 파일(drawtext용) ----------
 
 def write_textfile(text, path):
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
+
+# ---------- 레코드 모드 (회전 원형 앨범아트) ----------
+
+def disc_diameter(lay):
+    """레코드(원형 앨범아트) 지름. 가로형은 화면 높이, 세로형은 폭 기준."""
+    W, H = lay["W"], lay["H"]
+    d = int(W * 0.55) if H > W else int(H * 0.42)
+    return d - (d % 2)
+
+
+def make_disc_png(src, out_path, size):
+    """앨범아트 -> 원형 마스킹 + 흰 테두리 링 PNG (프리패스, 1프레임).
+    본 렌더에선 이 PNG 를 rotate 로 돌리기만 하면 되어 프레임당 비용이 적다."""
+    D = size - (size % 2)
+    c = (D - 1) / 2
+    R = D / 2 - 2          # 소프트 엣지 여유
+    ring_w = max(4, D // 52)
+    ring = f"between(hypot(X-{c:.1f},Y-{c:.1f}),{R - ring_w:.1f},{R:.1f})"
+    a_expr = f"255*clip(({R:.1f}-hypot(X-{c:.1f},Y-{c:.1f}))/2+1,0,1)"
+    vf = (
+        f"scale={D}:{D}:force_original_aspect_ratio=increase,crop={D}:{D},"
+        f"format=gbrap,"
+        f"geq=r='if({ring},248,r(X,Y))':g='if({ring},248,g(X,Y))':"
+        f"b='if({ring},248,b(X,Y))':a='{a_expr}'"
+    )
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", os.path.abspath(src),
+           "-vf", vf, "-frames:v", "1", os.path.abspath(out_path)]
+    if run(cmd).returncode != 0:
+        sys.exit("레코드 모드: 앨범아트 원형 마스킹 실패")
 
 # ---------- 렌더 ----------
 
@@ -463,13 +654,16 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            video_bg=None, crf=20, scale=1.0, preset="medium",
            normalize=False, master=False, fade_in=0.0, fade_out=0.0,
            vignette=False, grain=False, bg_pulse=False,
-           intro_card=False, ic_title="", ic_artist="", gaps=None):
+           intro_card=False, ic_title="", ic_artist="", gaps=None,
+           viz_colors=None, bg_style="gradient", bg_grad=None,
+           scrim=False, disc_png=None, progress_bar=False):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
 
     extra_inputs, bg_parts, bg_label, audio_idx = build_bg(
-        bg_list, lay, duration, kenburns, bg_color, video_bg=video_bg)
+        bg_list, lay, duration, kenburns, bg_color, video_bg=video_bg,
+        bg_style=bg_style, bg_grad=bg_grad)
     audio_spec = f"{audio_idx}:a"
 
     parts = list(bg_parts)
@@ -521,18 +715,41 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     else:
         audio_map = audio_spec
 
-    viz_parts, viz_label = build_viz(viz_audio, lay, viz)
+    # ---- 하단 스크림: 밝은 배경에서 파형/자막 가독성 확보 ----
+    if scrim:
+        sh = int(H * 0.38)
+        sh -= sh % 2
+        parts.append(f"color=c=black:s={W}x{sh}:r={FPS},format=yuva420p[scb]")
+        # 위(투명)→아래(약 55% 어둡게) 세로 그라데이션을 알파로 사용
+        parts.append(
+            f"gradients=s={W}x{sh}:c0=0x000000:c1=0x8C8C8C:"
+            f"x0=0:y0=0:x1=0:y1={sh}:speed=0.00001:r={FPS},format=gray[scm]")
+        parts.append("[scb][scm]alphamerge[scrim]")
+        parts.append(f"{bg_label}[scrim]overlay=0:{H - sh}:format=auto[bgsc]")
+        bg_label = "[bgsc]"
+
+    viz_parts, viz_labels = build_viz(viz_audio, lay, viz, colors=viz_colors)
     parts += list(viz_parts)
 
-    if viz_label:
-        parts.append(f"{bg_label}{viz_label}overlay=0:{lay['viz_y']}:"
-                     "format=auto[vmix]")
-        cur = "[vmix]"
-    else:
-        cur = bg_label
+    cur = bg_label
+    for i, lbl in enumerate(viz_labels):
+        parts.append(f"{cur}{lbl}overlay=0:{lay['viz_y']}:format=auto[vmix{i}]")
+        cur = f"[vmix{i}]"
 
-    # 자막 burn-in
-    parts.append(f"{cur}subtitles={ass_name}[vsub]")
+    # ---- 레코드 모드: 원형 앨범아트가 천천히 회전 ----
+    disc_idx = None
+    if disc_png:
+        D = disc_diameter(lay)
+        disc_idx = audio_idx + 1 + (1 if logo else 0)
+        cy = int(H * 0.30) if H > W else int(H * 0.36)  # 세로형은 조금 위
+        parts.append(
+            f"[{disc_idx}:v]format=rgba,rotate=2*PI*t/16:ow={D}:oh={D}:"
+            f"c=black@0,fps={FPS}[disc]")
+        parts.append(f"{cur}[disc]overlay={(W - D) // 2}:{cy - D // 2}[vdisc]")
+        cur = "[vdisc]"
+
+    # 자막 burn-in (동봉 fonts/ 를 fontsdir 로 등록)
+    parts.append(f"{cur}{subtitles_filter(ass_name)}[vsub]")
     cur = "[vsub]"
 
     # 워터마크 / 로고 (해상도 scale 에 맞춰 크기/여백 조정)
@@ -575,10 +792,19 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     if gaps:
         enable = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in gaps)
         parts.append(
-            f"{cur}drawtext={draw_font_spec()}:text='♪':fontcolor=white@0.45:"
+            f"{cur}drawtext={symbol_font_spec()}:text='♪':fontcolor=white@0.45:"
             f"fontsize={int(round(120*scale))}:x=(w-tw)/2:y=(h-th)/2:"
             f"enable='{enable}'[vnote]")
         cur = "[vnote]"
+
+    # ---- 곡 진행바: 하단 얇은 라인 (파형 색과 통일) ----
+    if progress_bar and duration:
+        ph = max(4, int(round(6 * scale)))
+        accent = norm_hex((viz_colors or [None])[0], DEFAULT_VIZ_COLORS[0])
+        parts.append(f"color=c=0x{accent}@0.85:s={W}x{ph}:r={FPS}[pbar]")
+        parts.append(
+            f"{cur}[pbar]overlay=x='-w+w*t/{duration:.3f}':y={H - ph}[vpb]")
+        cur = "[vpb]"
 
     # ---- 영상 피니셔 (분위기) : 비네트 -> 필름그레인 -> 페이드 ----
     if vignette:
@@ -607,6 +833,8 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     cmd += ["-i", os.path.abspath(audio)]
     if logo:
         cmd += ["-i", os.path.abspath(logo)]
+    if disc_png:
+        cmd += ["-loop", "1", "-i", os.path.abspath(disc_png)]
 
     cmd += [
         "-filter_complex", full_filter,
@@ -632,27 +860,36 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
 
 # ---------- 썸네일 ----------
 
-def make_thumbnail(out_path, title, artist=None, bg=None, bg_color="0x0a0a14"):
+def make_thumbnail(out_path, title, artist=None, bg=None, bg_color="0x0a0a14",
+                   accent=None):
     work_dir = os.path.dirname(os.path.abspath(out_path)) or "."
     W, Ht = 1280, 720
     write_textfile(title, os.path.join(work_dir, "_ttl.txt"))
+    accent = norm_hex(accent, DEFAULT_VIZ_COLORS[0])
     vf = []
     if bg:
         src = ["-i", os.path.abspath(bg)]
         vf.append(f"scale={W}:{Ht}:force_original_aspect_ratio=increase,crop={W}:{Ht}")
     else:
-        src = ["-f", "lavfi", "-i", f"color=c={bg_color}:s={W}x{Ht}"]
-    vf.append(f"drawbox=0:0:{W}:{Ht}:color=black@0.4:t=fill")
+        # 배경 이미지가 없으면 영상과 같은 그라데이션 톤 (단색보다 예쁘다)
+        cols = derive_bg_grad(bg_color)
+        cparams = ":".join(f"c{i}=0x{c}" for i, c in enumerate(cols))
+        src = ["-f", "lavfi", "-i",
+               f"gradients=s={W}x{Ht}:{cparams}:nb_colors={len(cols)}"]
+    vf.append(f"drawbox=0:0:{W}:{Ht}:color=black@0.35:t=fill")
     vf.append(
         f"drawtext={draw_font_spec()}:textfile=_ttl.txt:fontcolor=white:"
-        "fontsize=92:x=(w-tw)/2:y=(h-th)/2-40:"
+        "fontsize=96:x=(w-tw)/2:y=(h-th)/2-52:"
         "shadowcolor=black@0.8:shadowx=3:shadowy=3"
     )
+    # 제목 아래 포인트 컬러 바 — 비주얼라이저 색과 톤을 맞춘다
+    vf.append(f"drawbox=x=(iw-300)/2:y={Ht // 2 + 28}:w=300:h=10:"
+              f"color=0x{accent}@0.95:t=fill")
     if artist:
         write_textfile(artist, os.path.join(work_dir, "_art.txt"))
         vf.append(
             f"drawtext={draw_font_spec()}:textfile=_art.txt:fontcolor=white@0.85:"
-            "fontsize=48:x=(w-tw)/2:y=(h-th)/2+70:"
+            f"fontsize=48:x=(w-tw)/2:y={Ht // 2 + 78}:"
             "shadowcolor=black@0.8:shadowx=2:shadowy=2"
         )
     cmd = ["ffmpeg", "-y"] + src + ["-vf", ",".join(vf), "-frames:v", "1",
@@ -672,10 +909,23 @@ def main():
     ap.add_argument("--video-bg", help="배경 영상 (AI 생성 클립 등, 이미지보다 우선)")
     ap.add_argument("--out", default="mv.mp4", help="출력 mp4")
     ap.add_argument("--viz", default="waves",
-                    choices=["waves", "cqt", "spectrum", "bars", "none"])
+                    choices=["waves", "bars", "line", "cqt", "spectrum", "none"])
+    ap.add_argument("--viz-color", nargs="+", metavar="RRGGBB",
+                    help="비주얼라이저 그라데이션 색 1~2개 (기본 파스텔 하늘→핑크)")
     ap.add_argument("--bg-color", default="0x0a0a14")
+    ap.add_argument("--bg-style", choices=["gradient", "solid"], default="gradient",
+                    help="배경 이미지가 없을 때: gradient=흐르는 그라데이션(기본), solid=단색")
+    ap.add_argument("--bg-grad", nargs="+", metavar="RRGGBB",
+                    help="그라데이션 배경 색 목록 (기본: bg-color 에서 자동 유도)")
     ap.add_argument("--kenburns", action=argparse.BooleanOptionalAction,
                     default=True, help="배경 줌/팬 (기본 on, --no-kenburns 로 끔)")
+    ap.add_argument("--scrim", action=argparse.BooleanOptionalAction, default=None,
+                    help="하단 가독성 스크림. 기본: 배경 이미지/영상이 있으면 자동 on")
+    ap.add_argument("--disc", action="store_true",
+                    help="레코드 모드: 원형 앨범아트가 중앙에서 천천히 회전")
+    ap.add_argument("--disc-art", help="레코드 모드 앨범아트 (기본: 첫 --bg 이미지)")
+    ap.add_argument("--progress-bar", action="store_true",
+                    help="하단 곡 진행바 (파형 색과 통일)")
     # 가사 싱크
     ap.add_argument("--align", choices=["none", "auto"], default="none",
                     help="auto: stable-ts 로 가사 강제정렬")
@@ -690,6 +940,10 @@ def main():
     ap.add_argument("--sub-pos", choices=["bottom", "middle", "top"], default="bottom",
                     help="자막 세로 위치")
     ap.add_argument("--sub-glow", action="store_true", help="자막 발광(blur) 효과")
+    ap.add_argument("--sub-fade", action=argparse.BooleanOptionalAction, default=True,
+                    help="소절 단위 페이드 인/아웃 (기본 on, --no-sub-fade 로 끔)")
+    ap.add_argument("--sub-preview", action=argparse.BooleanOptionalAction, default=False,
+                    help="다음 소절 미리보기 (현재 줄 아래 작고 흐리게)")
     ap.add_argument("--intro-card", action="store_true",
                     help="시작 ~4초 제목/아티스트 페이드인 오프닝")
     ap.add_argument("--interlude-note", action="store_true",
@@ -791,14 +1045,31 @@ def main():
     ass_path = os.path.join(out_dir, "_sub.ass")
     write_ass(cues, ass_path, lay, font=args.font, color=args.sub_color,
               size_mult=args.sub_size, pos=args.sub_pos, karaoke=args.karaoke,
-              glow=args.sub_glow)
+              glow=args.sub_glow, fade=args.sub_fade, preview=args.sub_preview)
+
+    # 스크림: 명시 지정 없으면 배경 이미지/영상이 있을 때 자동 on
+    scrim = args.scrim if args.scrim is not None else bool(args.bg or args.video_bg)
+
+    # 레코드 모드: 앨범아트 원형 마스킹 프리패스
+    disc_png = None
+    if args.disc:
+        art = args.disc_art or (args.bg[0] if args.bg else None)
+        if art and os.path.exists(art):
+            disc_png = os.path.join(out_dir, "_disc.png")
+            make_disc_png(art, disc_png, disc_diameter(lay))
+        else:
+            print("[warn] --disc 에 쓸 앨범아트가 없습니다 "
+                  "(--disc-art 또는 --bg 필요) — 레코드 모드 생략")
 
     # 간주(가사 없는 긴 구간) 검출 -> ♪ 표시용 구간
     gaps = []
     if args.interlude_note and cues:
         GAP = 4.0
-        if not args.intro_card and cues[0][0] >= GAP:
-            gaps.append((0.5, cues[0][0] - 0.3))
+        if cues[0][0] >= GAP:
+            # 인트로 카드가 있으면 카드(~4초) 이후부터 ♪
+            lead = 4.5 if args.intro_card else 0.5
+            if cues[0][0] - 0.3 - lead >= 1.0:
+                gaps.append((lead, cues[0][0] - 0.3))
         for i in range(len(cues) - 1):
             s, e = cues[i][1], cues[i + 1][0]
             if e - s >= GAP:
@@ -816,17 +1087,21 @@ def main():
            fade_in=args.fade_in, fade_out=args.fade_out,
            vignette=args.vignette, grain=args.film_grain, bg_pulse=args.bg_pulse,
            intro_card=args.intro_card, ic_title=args.title or "",
-           ic_artist=args.artist or "", gaps=gaps)
+           ic_artist=args.artist or "", gaps=gaps,
+           viz_colors=args.viz_color, bg_style=args.bg_style, bg_grad=args.bg_grad,
+           scrim=scrim, disc_png=disc_png, progress_bar=args.progress_bar)
 
     # 썸네일 (미리보기에선 생략)
     if args.title and args.preview_secs == 0:
         thumb = args.thumb_out or (os.path.splitext(args.out)[0] + "_thumb.jpg")
         bg0 = args.bg[0] if args.bg else None
-        make_thumbnail(thumb, args.title, args.artist, bg=bg0, bg_color=args.bg_color)
+        accent = (args.viz_color or DEFAULT_VIZ_COLORS)[0]
+        make_thumbnail(thumb, args.title, args.artist, bg=bg0,
+                       bg_color=args.bg_color, accent=accent)
 
     if not args.keep_ass:
         for tmp in ("_sub.ass", "_wm.txt", "_ttl.txt", "_art.txt",
-                    "_ic_ttl.txt", "_ic_art.txt", "_pulse.cmd"):
+                    "_ic_ttl.txt", "_ic_art.txt", "_pulse.cmd", "_disc.png"):
             try:
                 os.remove(os.path.join(out_dir, tmp))
             except OSError:
