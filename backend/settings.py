@@ -53,10 +53,16 @@ def _persist():
 
 
 def update(patch: dict):
-    """제공된 필드만 갱신. *_api_key 는 빈 문자열이면 무시(기존 키 유지)."""
+    """제공된 필드만 갱신. *_api_key 는 빈 문자열이면 무시(기존 키 유지).
+    'llm_api_key_clear'/'video_api_key_clear': true 로 저장된 키를 명시적으로 삭제."""
     with _LOCK:
         s = _load()
         for k, v in patch.items():
+            if k.endswith("_api_key_clear") and v:
+                field = k[:-len("_clear")]
+                if field in DEFAULTS:
+                    s[field] = ""
+                continue
             if k not in DEFAULTS or v is None:
                 continue
             if k.endswith("_api_key") and v == "":

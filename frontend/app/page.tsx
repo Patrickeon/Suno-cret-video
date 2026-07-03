@@ -172,7 +172,7 @@ export default function Home() {
   }, [audioUrl]);
   useEffect(() => () => { bgUrls.forEach((u) => URL.revokeObjectURL(u)); }, [bgUrls]);
 
-  async function saveSettings(patch: Record<string, string>) {
+  async function saveSettings(patch: Record<string, string | boolean>) {
     const r = await fetch(`${API}/api/settings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

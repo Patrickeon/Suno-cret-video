@@ -11,7 +11,7 @@ export function SettingsModal({
 }: {
   settings: Settings | null;
   onClose: () => void;
-  onSave: (patch: Record<string, string>) => Promise<void>;
+  onSave: (patch: Record<string, string | boolean>) => Promise<void>;
 }) {
   const [llmProvider, setLlmProvider] = useState(settings?.llm_provider ?? "claude");
   const [llmModel, setLlmModel] = useState(settings?.llm_model ?? "claude-sonnet-4-6");
@@ -22,10 +22,11 @@ export function SettingsModal({
   const [videoProvider, setVideoProvider] = useState(settings?.video_provider ?? "replicate");
   const [videoKey, setVideoKey] = useState("");
   const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState("");
 
   async function save() {
     setSaving(true);
-    const patch: Record<string, string> = {
+    const patch: Record<string, string | boolean> = {
       llm_provider: llmProvider,
       llm_model: llmModel,
       video_provider: videoProvider,
@@ -37,6 +38,12 @@ export function SettingsModal({
     setVideoKey("");
     setSaving(false);
     onClose();
+  }
+
+  async function clearKey(which: "llm" | "video") {
+    setClearing(which);
+    await onSave({ [`${which}_api_key_clear`]: true });
+    setClearing("");
   }
 
   return (
@@ -80,7 +87,19 @@ export function SettingsModal({
             )}
           </Field>
           <Field label={`API 키 ${settings?.llm_key_set ? "(설정됨 ✓ — 바꿀 때만 입력)" : "(미설정)"}`}>
-            <input type="password" value={llmKey} onChange={(e) => setLlmKey(e.target.value)} placeholder="sk-ant-..." className={inputCls} />
+            <div className="flex gap-2">
+              <input type="password" value={llmKey} onChange={(e) => setLlmKey(e.target.value)} placeholder="sk-ant-..." className={inputCls} />
+              {settings?.llm_key_set && (
+                <button
+                  onClick={() => clearKey("llm")}
+                  disabled={clearing === "llm"}
+                  title="저장된 키 삭제"
+                  className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-xs text-[var(--text-dim)] hover:text-red-300 disabled:opacity-50"
+                >
+                  {clearing === "llm" ? "…" : "지우기"}
+                </button>
+              )}
+            </div>
           </Field>
         </div>
 
@@ -94,7 +113,19 @@ export function SettingsModal({
             </select>
           </Field>
           <Field label={`API 키 ${settings?.video_key_set ? "(설정됨 ✓)" : "(미설정)"}`}>
-            <input type="password" value={videoKey} onChange={(e) => setVideoKey(e.target.value)} placeholder="키 입력" className={inputCls} />
+            <div className="flex gap-2">
+              <input type="password" value={videoKey} onChange={(e) => setVideoKey(e.target.value)} placeholder="키 입력 (r8_... / fal_...)" className={inputCls} />
+              {settings?.video_key_set && (
+                <button
+                  onClick={() => clearKey("video")}
+                  disabled={clearing === "video"}
+                  title="저장된 키 삭제"
+                  className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-xs text-[var(--text-dim)] hover:text-red-300 disabled:opacity-50"
+                >
+                  {clearing === "video" ? "…" : "지우기"}
+                </button>
+              )}
+            </div>
           </Field>
         </div>
 

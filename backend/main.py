@@ -186,6 +186,8 @@ class SettingsBody(BaseModel):
     llm_api_key: str | None = None
     video_provider: str | None = None
     video_api_key: str | None = None
+    llm_api_key_clear: bool | None = None    # true 면 저장된 LLM 키 삭제
+    video_api_key_clear: bool | None = None  # true 면 저장된 영상 키 삭제
 
 
 @app.get("/api/fonts")
