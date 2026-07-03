@@ -568,22 +568,33 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
 DEFAULT_VIZ_COLORS = ["7DD3FC", "F0ABFC"]
 
 
-def _viz_gradient_glow(raw_label, parts, W, h, colors):
-    """흰색 비주얼라이저를 알파 마스크로 써서 그라데이션 색을 입히고,
-    블러 글로우(밑) + 선명한 본체(위) 두 레이어를 만든다.
-    요즘 lyric video 채널들의 '네온 글로우' 룩."""
+def _viz_gradient_glow(raw_label, parts, W, h, colors, segmented=False):
+    """흰색 비주얼라이저(2배 슈퍼샘플)를 알파 마스크로 써서 그라데이션을 입히고,
+    겉광(넓고 은은) + 속광(좁고 밝음) + 선명한 본체 3레이어를 만든다.
+    - 2x 렌더 후 lanczos 다운스케일: 계단 현상 없는 부드러운 곡선
+    - segmented: 세로 갭을 넣어 막대를 또렷한 바 단위로 분할 (EQ 스타일)
+    """
     c = [norm_hex(x) for x in (colors or [])]
     c = [x for x in c if x] or list(DEFAULT_VIZ_COLORS)
     if len(c) == 1:
         c = c * 2
-    parts.append(f"{raw_label}format=rgba,alphaextract[vmask]")
+    parts.append(f"{raw_label}scale={W}:{h}:flags=lanczos,"
+                 f"format=rgba,alphaextract[vmask0]")
+    mask = "[vmask0]"
+    if segmented:
+        # 주기적인 세로 검은 줄로 막대 사이 갭 생성
+        seg = max(10, W // 96)          # 막대+갭 주기
+        gap = max(3, seg * 2 // 5)      # 갭 두께
+        parts.append(f"{mask}drawgrid=w={seg}:h={h * 4}:t={gap}:c=black[vmask]")
+        mask = "[vmask]"
     parts.append(
         f"gradients=s={W}x{h}:c0=0x{c[0]}:c1=0x{c[1]}:"
         f"x0=0:y0={h // 2}:x1={W}:y1={h // 2}:speed=0.006:r={FPS}[vgrad]")
-    parts.append("[vgrad][vmask]alphamerge[vcol]")
-    parts.append("[vcol]split[vsharp][vsoft]")
-    parts.append("[vsoft]gblur=sigma=12[vglow]")
-    return ["[vglow]", "[vsharp]"]
+    parts.append(f"[vgrad]{mask}alphamerge[vcol]")
+    parts.append("[vcol]split=3[vsharp][vs1][vs2]")
+    parts.append("[vs1]gblur=sigma=5[vglow1]")                       # 속광
+    parts.append("[vs2]gblur=sigma=18,colorchannelmixer=aa=0.65[vglow2]")  # 겉광
+    return ["[vglow2]", "[vglow1]", "[vsharp]"]
 
 
 def build_viz(audio_spec, lay, viz, colors=None):
@@ -594,23 +605,35 @@ def build_viz(audio_spec, lay, viz, colors=None):
     if viz == "none":
         return [], []
     if viz == "waves":
-        # 부드러운 중앙 대칭 파형 + 그라데이션 + 글로우 (기본)
-        parts.append(f"[{audio_spec}]showwaves=s={W}x{h}:mode=cline:"
+        # 부드러운 중앙 대칭 파형 + 그라데이션 + 이중 글로우 (기본)
+        parts.append(f"[{audio_spec}]showwaves=s={W * 2}x{h * 2}:mode=cline:"
                      f"colors=white:rate={FPS}[vraw]")
         labels = _viz_gradient_glow("[vraw]", parts, W, h, colors)
         return parts, labels
     if viz == "bars":
-        # 주파수 막대 — 같은 그라데이션+글로우 룩으로 통일
-        parts.append(f"[{audio_spec}]showfreqs=s={W}x{h}:mode=bar:ascale=log:"
-                     f"fscale=log:win_size=1024:colors=white:rate={FPS}[vraw]")
-        labels = _viz_gradient_glow("[vraw]", parts, W, h, colors)
+        # 갭이 있는 또렷한 EQ 막대 + 그라데이션 + 이중 글로우
+        parts.append(f"[{audio_spec}]showfreqs=s={W * 2}x{h * 2}:mode=bar:ascale=log:"
+                     f"fscale=log:win_size=2048:colors=white:rate={FPS}[vraw]")
+        labels = _viz_gradient_glow("[vraw]", parts, W, h, colors, segmented=True)
         return parts, labels
     if viz == "line":
-        # 미니멀: 얇은 반투명 라인 파형 (잔잔한 곡용)
+        # 미니멀: 얇은 그라데이션 라인 + 은은한 글로우 (잔잔한 곡용)
         lh = max(2, (h * 3 // 5) - ((h * 3 // 5) % 2))
-        parts.append(f"[{audio_spec}]showwaves=s={W}x{lh}:mode=p2p:"
-                     f"colors=white@0.75:rate={FPS},format=yuva420p[viz]")
-        return parts, ["[viz]"]
+        c = [norm_hex(x) for x in (colors or [])]
+        c = [x for x in c if x] or list(DEFAULT_VIZ_COLORS)
+        if len(c) == 1:
+            c = c * 2
+        parts.append(f"[{audio_spec}]showwaves=s={W * 2}x{lh * 2}:mode=p2p:"
+                     f"colors=white:rate={FPS}[lraw]")
+        parts.append(f"[lraw]scale={W}:{lh}:flags=lanczos,"
+                     f"format=rgba,alphaextract[lmask]")
+        parts.append(
+            f"gradients=s={W}x{lh}:c0=0x{c[0]}:c1=0x{c[1]}:"
+            f"x0=0:y0={lh // 2}:x1={W}:y1={lh // 2}:speed=0.006:r={FPS}[lgrad]")
+        parts.append("[lgrad][lmask]alphamerge,colorchannelmixer=aa=0.9[lcol]")
+        parts.append("[lcol]split[lsharp][lsoft]")
+        parts.append("[lsoft]gblur=sigma=4,colorchannelmixer=aa=0.5[lglow]")
+        return parts, ["[lglow]", "[lsharp]"]
     if viz == "cqt":
         return [f"[{audio_spec}]showcqt=s={W}x{h}:count=2:gamma=4,"
                 "format=yuva420p[viz]"], ["[viz]"]

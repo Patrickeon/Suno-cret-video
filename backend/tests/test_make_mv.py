@@ -118,18 +118,30 @@ def test_derive_bg_grad_returns_three_hex():
     assert mv.derive_bg_grad("black") == mv.DEFAULT_BG_GRAD
 
 
-def test_build_viz_waves_gradient_glow_labels():
+def test_build_viz_waves_gradient_dual_glow():
     lay = mv.get_layout(False)
     parts, labels = mv.build_viz("1:a", lay, "waves")
-    assert labels == ["[vglow]", "[vsharp]"]
+    # 겉광 -> 속광 -> 본체 순으로 겹침
+    assert labels == ["[vglow2]", "[vglow1]", "[vsharp]"]
     joined = ";".join(parts)
     assert "gradients=" in joined and "alphamerge" in joined and "gblur" in joined
+    # 2배 슈퍼샘플링 후 lanczos 다운스케일
+    assert f"s={lay['W'] * 2}x{lay['viz_h'] * 2}" in parts[0]
+    assert "flags=lanczos" in joined
 
 
-def test_build_viz_line_single_label():
+def test_build_viz_bars_segmented():
+    lay = mv.get_layout(False)
+    parts, labels = mv.build_viz("1:a", lay, "bars")
+    joined = ";".join(parts)
+    assert "drawgrid" in joined  # 막대 사이 갭
+    assert labels == ["[vglow2]", "[vglow1]", "[vsharp]"]
+
+
+def test_build_viz_line_gradient_glow():
     lay = mv.get_layout(False)
     parts, labels = mv.build_viz("1:a", lay, "line")
-    assert labels == ["[viz]"]
+    assert labels == ["[lglow]", "[lsharp]"]
     assert "p2p" in parts[0]
 
 
