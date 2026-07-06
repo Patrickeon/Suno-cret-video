@@ -3,16 +3,18 @@
 ⚠️ 외부 인증이 필요해 기본 의존성엔 없다. 사용하려면:
   1) Google Cloud 프로젝트에서 YouTube Data API v3 사용 설정
   2) OAuth 클라이언트(데스크톱 앱) 만들어 client_secret.json 다운로드 →
-     backend/data/youtube_client_secret.json 로 저장
+     paths.data_dir()/youtube_client_secret.json 로 저장 (기본: 문서/Suno MV Studio)
   3) pip install -r requirements-youtube.txt
   4) 최초 1회 인증:  python -m yt_upload  (브라우저 동의 → 토큰 저장)
 그 후 /api/youtube/upload 로 업로드 가능.
 
-토큰/시크릿은 backend/data/ (gitignore) 에 저장된다.
+토큰/시크릿 저장 위치는 paths.py 참고 (MV_DATA_DIR 로 재정의 가능).
 """
 import os
 
-_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+import paths
+
+_DIR = paths.data_dir()
 TOKEN_PATH = os.path.join(_DIR, "youtube_token.json")
 CLIENT_SECRET = os.path.join(_DIR, "youtube_client_secret.json")
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]

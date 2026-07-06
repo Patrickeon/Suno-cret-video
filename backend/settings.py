@@ -10,7 +10,9 @@ import json
 import os
 import threading
 
-_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+import paths
+
+_DIR = paths.data_dir()
 _PATH = os.path.join(_DIR, "settings.json")
 _LOCK = threading.Lock()
 

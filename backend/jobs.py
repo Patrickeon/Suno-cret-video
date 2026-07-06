@@ -11,7 +11,9 @@ import threading
 import time
 import uuid
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "jobs")
+import paths
+
+DATA_DIR = os.path.join(paths.data_dir(), "jobs")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 _JOBS = {}

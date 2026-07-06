@@ -53,10 +53,21 @@ npm run dev
 렌더 진행률은 잡 응답의 `progress`(0~100)로 노출된다 — make_mv 가 ffmpeg `-progress`를
 파싱해 `MV_PROGRESS`로 흘리고, 백엔드가 잡에 반영, 프론트가 결정형 진행바로 표시.
 
-## 환경변수
+## 환경변수 — 로컬 vs GCP 설정 분리
 
 - 프론트: `frontend/.env.local` → `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000`
-- 백엔드(AI 에이전트용, 예정): `ANTHROPIC_API_KEY`
+- 백엔드(AI 에이전트용): `ANTHROPIC_API_KEY`
+
+**로컬 실행(데스크톱)**
+- `MV_DATA_DIR` : 잡(음원/가사/렌더결과)·설정이 저장될 폴더. **지정하지 않으면
+  사용자 "문서" 폴더 아래 `Suno MV Studio` 를 자동 생성해 사용**(`backend/paths.py`).
+  예) `$env:MV_DATA_DIR="D:\MV출력"` 로 원하는 드라이브/경로 지정 가능.
+
+**GCP(컨테이너) 배포**
+- 컨테이너는 `MV_DATA_DIR=/app/backend/data` 로 고정돼 있다(`backend/Dockerfile`) —
+  로컬의 "문서 폴더 기본값"이 컨테이너에는 절대 적용되지 않는다.
+- `GCS_BUCKET` : 설정하면 렌더 결과(out.mp4/썸네일)를 GCS 에 저장·스트리밍해
+  재배포/재시작에도 살아남게 한다(`backend/storage.py`). 로컬 실행에선 보통 불필요.
 
 ## AI 편집 에이전트 (Phase 3)
 

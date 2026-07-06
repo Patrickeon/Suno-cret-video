@@ -176,6 +176,11 @@ Suno-cret-video/
 
 ## 변경 내역
 
+- **v0.7 — 로컬/GCP 저장 경로 분리** : `backend/paths.py` 신설. 로컬 실행은
+  `MV_DATA_DIR` 로 저장 경로 지정 가능, 미지정 시 **"문서" 폴더 아래
+  `Suno MV Studio` 폴더**를 자동 생성해 사용(음원/가사/렌더결과·설정 전부).
+  GCP 컨테이너는 Dockerfile 이 `MV_DATA_DIR=/app/backend/data` 로 명시 고정해
+  로컬 기본값과 완전히 분리 — 영속화는 그대로 `GCS_BUCKET` 이 담당.
 - **v0.6 — AI 뮤직비디오** : 🎬 스토리보드 모드(가사→장면별 AI 클립→크로스페이드 배경, `/api/storyboard`), fal.ai provider(공개 API, Kling 등), Mock provider(키 없이 데모), 비주얼라이저 리디자인(슈퍼샘플링·이중 글로우·EQ 막대). Kaiber/Higgsfield 는 공개 API 부재로 제거.
 - **v0.5 — 연출 확장** : 💿 레코드 모드(원형 앨범아트 회전, `--disc`), 다음 소절 미리보기(`--sub-preview`), 하단 가독성 스크림(배경 이미지 시 자동), 곡 진행바(`--progress-bar`), AI 자동 팔레트(`/api/palette` — 가사 분위기로 파형/배경 색 추천).
 - **v0.4 — 디자인 개편** : 기본 폰트를 동봉 주아체(귀엽고 가독성 좋음)로 교체(`fonts/`, OFL), 파형을 그라데이션+글로우 룩으로 개편(`--viz-color` 팔레트), `line` 미니멀 비주얼라이저 추가, 배경 이미지가 없으면 흐르는 그라데이션 배경(`--bg-style`), 소절 단위 자막 페이드 기본화, 썸네일 디자인 개선(포인트 컬러 바).

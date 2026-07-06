@@ -21,6 +21,10 @@ COPY make_mv.py ./make_mv.py
 COPY fonts/ ./fonts/
 COPY backend/ ./backend/
 ENV PORT=8080
+# 컨테이너 전용 로컬 데이터 경로 — 로컬 데스크톱 실행의 "문서 폴더" 기본값이
+# 컨테이너에선 절대 적용되지 않도록 명시적으로 고정한다(paths.py 참고).
+# 결과물 영속화는 이 경로와 무관하게 GCS_BUCKET 이 따로 처리한다.
+ENV MV_DATA_DIR=/app/backend/data
 
 WORKDIR /app/backend
 # Cloud Run 은 $PORT 로 트래픽을 보냄
