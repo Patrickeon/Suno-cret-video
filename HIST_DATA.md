@@ -36,7 +36,15 @@
    - [x] 40초 합성 오디오+testsrc 이미지로 `--kenburns` 렌더 → t=1/10/20/30/38 프레임 추출, 후반부(t=38)까지 줌+팬 계속 진행 확인 (정지 없음). 다중 이미지(n>1) 크로스페이드 경로도 렌더 OK.
    - [x] `--disc` 모드 회귀 없음 — t=1 vs t=5 프레임 비교, 회전 확인
    - [x] preset slow 인코딩 시간: 40초 1080p 영상 → 34.4초 (실시간보다 빠름, 되돌릴 필요 없음)
-2. 검증 끝남 → 사용자에게 결과 보여주고 **커밋 여부 확인** 후 커밋 (아직 미커밋)
+2. [x] 검증 끝남 → 사용자 승인받아 커밋 완료: `b8b08a8 feat(quality)`
+
+### 3. 앱 토큰 인증 (2026-07-13 세션) — 구현+검증 완료, 커밋 대기
+사용자가 접근 제한 방식으로 **앱 토큰**(IAM 아님) 선택. 구현 내용:
+- **백엔드** `backend/main.py`: `APP_TOKEN` 환경변수 설정 시 전 API 에 `X-App-Token` 헤더 또는 `?token=` 쿼리 요구 (미디어 태그용). 미설정(로컬)이면 무인증 그대로. `/api/health`,`/healthz`,`/docs` 제외. hmac.compare_digest 비교. **CORSMiddleware 를 토큰 미들웨어보다 나중에 등록**해야 401 에도 CORS 헤더가 붙음 (순서 중요).
+- **프론트**: `lib/studio.ts` 에 `apiFetch`(헤더 주입 + 401 시 `mv:unauthorized` 이벤트), `mediaUrl`(쿼리 토큰), localStorage 키 `mv_app_token`. `TokenModal.tsx` 신설 — 401 감지 시 토큰 입력 모달, 저장 후 리로드. page.tsx/PublishPanel.tsx 의 모든 fetch 교체.
+- **deploy.ps1/deploy.sh**: APP_TOKEN 미지정 시 자동 생성(GUID/urandom), 배포 끝에 토큰 출력. 재배포 시 유지하려면 env 로 지정.
+- **검증**: pytest 84개 통과(신규 test_auth.py 5개 포함), `next build` 통과, 로컬 uvicorn 실기동으로 401/헤더/쿼리/오답/health 전부 확인, 401 응답에 CORS 헤더 확인. 브라우저 UI(모달 표시)는 wmux 브라우저 장애로 미확인 — 사용자가 localhost:3000 열어서 확인 가능.
+- **주의**: 아직 GCP 재배포 안 함. 커밋 + `./deploy.ps1` 재배포해야 실제 적용됨.
 3. 사용자가 승인한 다음 고도화 후보 (지난 턴에서 제시한 리스트, 아직 미착수):
    - Cloud Run 완전 공개 상태 → 접근 제한(IAM 인증) 적용 — **보안 이슈, 우선순위 높음**
    - Replicate/fal API 키 발급 후 AI 스토리보드 영상 실사용 검증 (현재 mock provider로만 검증됨)

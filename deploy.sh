@@ -25,6 +25,14 @@ ENVV="ALLOWED_ORIGINS=*"
 [ -n "${ANTHROPIC_API_KEY:-}" ] && ENVV="${ENVV},ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
 [ -n "${GCS_BUCKET:-}" ] && ENVV="${ENVV},GCS_BUCKET=${GCS_BUCKET}"
 
+# 접속 토큰: 미지정 시 자동 생성. 백엔드 API 전체가 이 토큰을 요구한다
+# (프론트 첫 접속 때 입력). 재배포 시 기존 토큰을 유지하려면 APP_TOKEN 지정.
+if [ -z "${APP_TOKEN:-}" ]; then
+  APP_TOKEN=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  echo "▶ APP_TOKEN 자동 생성됨 (재배포 시 유지하려면 APP_TOKEN 환경변수로 지정)"
+fi
+ENVV="${ENVV},APP_TOKEN=${APP_TOKEN}"
+
 echo "▶ 백엔드 배포"
 gcloud run deploy suno-backend --image "${REG}/backend" --region "${REGION}" \
   --allow-unauthenticated --memory 2Gi --cpu 2 --timeout 600 --max-instances 1 \
@@ -51,3 +59,4 @@ echo ""
 echo "✅ 완료"
 echo "  프론트: ${FRONT_URL}"
 echo "  백엔드: ${BACKEND_URL}"
+echo "  접속 토큰(APP_TOKEN): ${APP_TOKEN}  ← 프론트 첫 접속 시 입력"

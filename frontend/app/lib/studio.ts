@@ -3,6 +3,50 @@
 
 export const API = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
 
+// ---- 앱 토큰 (백엔드 APP_TOKEN 인증) ----
+// 배포 환경에서 백엔드가 X-App-Token 헤더를 요구할 때 사용.
+// 로컬 개발(백엔드 APP_TOKEN 미설정)에서는 토큰이 없어도 그대로 동작한다.
+const TOKEN_KEY = "mv_app_token";
+
+export function getAppToken(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setAppToken(t: string) {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* localStorage 불가 환경 무시 */
+  }
+}
+
+/** fetch 래퍼: 저장된 앱 토큰을 X-App-Token 헤더로 붙이고,
+ *  401 이면 "mv:unauthorized" 이벤트를 쏴서 토큰 입력 모달을 띄운다. */
+export async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const t = getAppToken();
+  if (t) headers.set("X-App-Token", t);
+  const r = await fetch(url, { ...init, headers });
+  if (r.status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new Event("mv:unauthorized"));
+  }
+  return r;
+}
+
+/** <video>/<img>/<a download> 용 미디어 URL — 헤더를 못 붙이므로 ?token= 쿼리로 인증. */
+export function mediaUrl(path: string): string {
+  const t = getAppToken();
+  if (!t) return `${API}${path}`;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${API}${path}${sep}token=${encodeURIComponent(t)}`;
+}
+
 export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
 export interface Job {

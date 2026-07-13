@@ -6,8 +6,11 @@ import { SettingsModal } from "./components/SettingsModal";
 import { HelpModal } from "./components/HelpModal";
 import { PublishPanel } from "./components/PublishPanel";
 import { LyricSyncModal } from "./components/LyricSyncModal";
+import { TokenModal } from "./components/TokenModal";
 import {
   API,
+  apiFetch,
+  mediaUrl,
   BG_PRESETS,
   inputCls,
   Job,
@@ -109,6 +112,14 @@ export default function Home() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [needToken, setNeedToken] = useState(false);
+
+  // 백엔드가 401 을 반환하면(apiFetch 가 mv:unauthorized 발행) 토큰 입력 모달 표시
+  useEffect(() => {
+    const on = () => setNeedToken(true);
+    window.addEventListener("mv:unauthorized", on);
+    return () => window.removeEventListener("mv:unauthorized", on);
+  }, []);
 
   // 프로젝트 프리셋 (스타일/품질 조합, localStorage)
   const [presets, setPresets] = useState<Record<string, Record<string, unknown>>>({});
@@ -143,15 +154,15 @@ export default function Home() {
   }, []);
 
   const refreshRecent = useCallback(() => {
-    fetch(`${API}/api/jobs`)
+    apiFetch(`${API}/api/jobs`)
       .then((r) => r.json())
       .then((d) => setRecent(d.jobs ?? []))
       .catch(() => {});
   }, []);
 
   useEffect(() => {
-    fetch(`${API}/api/settings`).then((r) => r.json()).then(setSettings).catch(() => {});
-    fetch(`${API}/api/fonts`).then((r) => r.json()).then((d) => setFonts(d.fonts ?? [])).catch(() => {});
+    apiFetch(`${API}/api/settings`).then((r) => r.json()).then(setSettings).catch(() => {});
+    apiFetch(`${API}/api/fonts`).then((r) => r.json()).then((d) => setFonts(d.fonts ?? [])).catch(() => {});
     refreshRecent();
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -173,7 +184,7 @@ export default function Home() {
   useEffect(() => () => { bgUrls.forEach((u) => URL.revokeObjectURL(u)); }, [bgUrls]);
 
   async function saveSettings(patch: Record<string, string | boolean>) {
-    const r = await fetch(`${API}/api/settings`, {
+    const r = await apiFetch(`${API}/api/settings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -247,7 +258,7 @@ export default function Home() {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       try {
-        const r = await fetch(`${API}/api/jobs/${id}`);
+        const r = await apiFetch(`${API}/api/jobs/${id}`);
         if (!r.ok) return;
         const j: Job = await r.json();
         setJob(j);
@@ -317,7 +328,7 @@ export default function Home() {
       if (font) fd.append("font", font);
       fd.append("auto_retry", String(autoRetry));
 
-      const r = await fetch(`${API}/api/render`, { method: "POST", body: fd });
+      const r = await apiFetch(`${API}/api/render`, { method: "POST", body: fd });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `서버 오류 (${r.status})`);
       setJob({ id: data.job_id, status: "queued", progress: 0, error: null, log: "", video: false, thumb: false });
@@ -360,7 +371,7 @@ export default function Home() {
       fd.append("watermark", watermark);
       fd.append("title", f.name.replace(/\.[^.]+$/, ""));
       try {
-        await fetch(`${API}/api/render`, { method: "POST", body: fd });
+        await apiFetch(`${API}/api/render`, { method: "POST", body: fd });
       } catch {
         /* 개별 실패 무시 */
       }
@@ -386,7 +397,7 @@ export default function Home() {
     }
     setPaletteBusy(true);
     try {
-      const r = await fetch(`${API}/api/palette`, {
+      const r = await apiFetch(`${API}/api/palette`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lyrics, title }),
@@ -411,7 +422,7 @@ export default function Home() {
     }
     setTranslateBusy(true);
     try {
-      const r = await fetch(`${API}/api/translate`, {
+      const r = await apiFetch(`${API}/api/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: lyricsText, target: translateTarget, bilingual: true }),
@@ -439,7 +450,7 @@ export default function Home() {
     setChatInput("");
     setAgentBusy(true);
     try {
-      const r = await fetch(`${API}/api/agent`, {
+      const r = await apiFetch(`${API}/api/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: job.id, message: msg, history }),
@@ -465,7 +476,7 @@ export default function Home() {
     }
     setAiVideoBusy(true);
     try {
-      const r = await fetch(`${API}/api/ai-video`, {
+      const r = await apiFetch(`${API}/api/ai-video`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: job.id, prompt }),
@@ -489,7 +500,7 @@ export default function Home() {
     }
     setStoryboardBusy(true);
     try {
-      const r = await fetch(`${API}/api/storyboard`, {
+      const r = await apiFetch(`${API}/api/storyboard`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: job.id, scenes: storyboardScenes }),
@@ -508,7 +519,7 @@ export default function Home() {
 
   async function cancelJob(id: string) {
     try {
-      await fetch(`${API}/api/jobs/${id}/cancel`, { method: "POST" });
+      await apiFetch(`${API}/api/jobs/${id}/cancel`, { method: "POST" });
       toast("취소를 요청했어요.", "info");
     } catch {
       toast("취소 실패", "error");
@@ -517,7 +528,7 @@ export default function Home() {
 
   async function deleteJob(id: string) {
     try {
-      const r = await fetch(`${API}/api/jobs/${id}`, { method: "DELETE" });
+      const r = await apiFetch(`${API}/api/jobs/${id}`, { method: "DELETE" });
       if (!r.ok) throw new Error();
       if (job?.id === id) {
         if (pollRef.current) clearInterval(pollRef.current);
@@ -544,7 +555,7 @@ export default function Home() {
 
   async function openJob(id: string) {
     try {
-      const j: Job = await (await fetch(`${API}/api/jobs/${id}`)).json();
+      const j: Job = await (await apiFetch(`${API}/api/jobs/${id}`)).json();
       setJob(j);
     } catch {
       toast("불러오기 실패", "error");
@@ -684,6 +695,7 @@ export default function Home() {
         <SettingsModal settings={settings} onClose={() => setShowSettings(false)} onSave={saveSettings} />
       )}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {needToken && <TokenModal />}
       {showSync && audio && (
         <LyricSyncModal
           audio={audio}
@@ -1221,10 +1233,10 @@ export default function Home() {
             )}
             {job?.status === "done" && job.video && (
               <div className="space-y-3">
-                <video src={`${API}/api/jobs/${job.id}/video`} controls className="mx-auto max-h-[68vh] w-full rounded-xl bg-black" />
+                <video src={mediaUrl(`/api/jobs/${job.id}/video`)} controls className="mx-auto max-h-[68vh] w-full rounded-xl bg-black" />
                 <div className="flex flex-wrap gap-2 text-sm">
-                  <a href={`${API}/api/jobs/${job.id}/video`} download className="rounded-lg bg-[var(--surface-2)] px-3 py-2 hover:bg-[var(--surface-3)]">⬇ 영상</a>
-                  {job.thumb && <a href={`${API}/api/jobs/${job.id}/thumb`} download className="rounded-lg bg-[var(--surface-2)] px-3 py-2 hover:bg-[var(--surface-3)]">⬇ 썸네일</a>}
+                  <a href={mediaUrl(`/api/jobs/${job.id}/video`)} download className="rounded-lg bg-[var(--surface-2)] px-3 py-2 hover:bg-[var(--surface-3)]">⬇ 영상</a>
+                  {job.thumb && <a href={mediaUrl(`/api/jobs/${job.id}/thumb`)} download className="rounded-lg bg-[var(--surface-2)] px-3 py-2 hover:bg-[var(--surface-3)]">⬇ 썸네일</a>}
                   <button onClick={() => setMode("ai")} className="rounded-lg bg-indigo-500/80 px-3 py-2 text-white hover:bg-indigo-500">✨ AI로 수정</button>
                   <button onClick={() => deleteJob(job.id)} className="rounded-lg bg-[var(--surface-2)] px-3 py-2 text-[var(--text-dim)] hover:bg-red-500/30 hover:text-white">🗑 삭제</button>
                 </div>
@@ -1289,7 +1301,7 @@ export default function Home() {
                   >
                     {r.thumb ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={`${API}/api/jobs/${r.id}/thumb`} alt="" className="aspect-video w-full object-cover" />
+                      <img src={mediaUrl(`/api/jobs/${r.id}/thumb`)} alt="" className="aspect-video w-full object-cover" />
                     ) : (
                       <div className="grid aspect-video place-items-center bg-[var(--surface-2)] text-[10px] text-[var(--text-dim)]">
                         {r.status === "error" ? "실패" : r.status === "cancelled" ? "취소됨" : r.status}

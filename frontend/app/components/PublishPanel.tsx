@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { API, inputCls } from "../lib/studio";
+import { API, apiFetch, inputCls, mediaUrl } from "../lib/studio";
 
 interface Chapter { time: string; label: string; }
 interface Meta {
@@ -35,7 +35,7 @@ export function PublishPanel({
   const [ytUrl, setYtUrl] = useState("");
 
   useEffect(() => {
-    fetch(`${API}/api/youtube/status`)
+    apiFetch(`${API}/api/youtube/status`)
       .then((r) => r.json())
       .then((d) => setYtReady(!!d.token))
       .catch(() => {});
@@ -44,7 +44,7 @@ export function PublishPanel({
   async function genMeta() {
     setMetaBusy(true);
     try {
-      const r = await fetch(`${API}/api/metadata`, {
+      const r = await apiFetch(`${API}/api/metadata`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: jobId }),
@@ -63,7 +63,7 @@ export function PublishPanel({
   async function runBatch() {
     setBatchBusy(true);
     try {
-      const r = await fetch(`${API}/api/batch`, {
+      const r = await apiFetch(`${API}/api/batch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: jobId, shorts_count: count }),
@@ -84,7 +84,7 @@ export function PublishPanel({
     setYtBusy(true);
     setYtUrl("");
     try {
-      const r = await fetch(`${API}/api/youtube/upload`, {
+      const r = await apiFetch(`${API}/api/youtube/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -182,7 +182,7 @@ export function PublishPanel({
         </div>
         {batchIds.length > 0 && (
           <a
-            href={`${API}/api/jobs/zip?ids=${batchIds.join(",")}`}
+            href={mediaUrl(`/api/jobs/zip?ids=${batchIds.join(",")}`)}
             className="inline-block rounded-lg bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text)] hover:bg-[var(--surface-3)]"
           >
             📦 완료분 전체 ZIP 다운로드

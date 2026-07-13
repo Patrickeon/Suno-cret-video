@@ -37,6 +37,15 @@ Invoke-Checked "백엔드 이미지 푸시"
 $envVars = @("ALLOWED_ORIGINS=*")
 if ($env:ANTHROPIC_API_KEY) { $envVars += "ANTHROPIC_API_KEY=$($env:ANTHROPIC_API_KEY)" }
 if ($env:GCS_BUCKET) { $envVars += "GCS_BUCKET=$($env:GCS_BUCKET)" }
+
+# 접속 토큰: 미지정 시 자동 생성. 백엔드 API 전체가 이 토큰을 요구한다
+# (프론트 첫 접속 때 입력). 재배포 시 기존 토큰을 유지하려면 $env:APP_TOKEN 지정.
+$AppToken = $env:APP_TOKEN
+if (-not $AppToken) {
+    $AppToken = [guid]::NewGuid().ToString("N")
+    Write-Host "▶ APP_TOKEN 자동 생성됨 (재배포 시 유지하려면 `$env:APP_TOKEN 으로 지정)"
+}
+$envVars += "APP_TOKEN=$AppToken"
 $envArg = ($envVars -join ",")
 
 Write-Host "▶ 백엔드 배포"
@@ -70,4 +79,5 @@ Invoke-Checked "백엔드 CORS 갱신"
 Write-Host "`n✅ 완료"
 Write-Host "  프론트: $FrontUrl"
 Write-Host "  백엔드: $BackendUrl"
+Write-Host "  접속 토큰(APP_TOKEN): $AppToken  ← 프론트 첫 접속 시 입력"
 Write-Host "  (키는 --set-secrets 로 Secret Manager 사용 권장 — DEPLOY.md 참고)"

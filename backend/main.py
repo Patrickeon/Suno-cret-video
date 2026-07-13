@@ -3,6 +3,7 @@
 음원/가사/배경 업로드 -> make_mv.py 렌더 -> 비동기 잡 -> 비디오/썸네일 서빙.
 프론트(Next.js, :3000)에서 호출.
 """
+import hmac
 import os
 import tempfile
 import zipfile
@@ -40,7 +41,28 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Suno MV Studio API", lifespan=lifespan)
 
+# 앱 토큰 인증: APP_TOKEN 이 설정된 경우에만 활성화 (로컬 개발은 미설정 = 무인증).
+# 헤더(X-App-Token) 또는 쿼리(?token=) 둘 다 허용 — <video>/<img>/<a download> 는
+# 커스텀 헤더를 못 붙이므로 미디어 URL 은 쿼리 방식을 쓴다.
+APP_TOKEN = os.environ.get("APP_TOKEN", "")
+_TOKEN_EXEMPT = {"/api/health", "/healthz", "/docs", "/openapi.json"}
+
+
+@app.middleware("http")
+async def _require_app_token(request, call_next):
+    # CORS preflight(OPTIONS) 는 브라우저가 헤더를 못 붙이므로 통과시킨다.
+    if APP_TOKEN and request.method != "OPTIONS" \
+            and request.url.path not in _TOKEN_EXEMPT:
+        supplied = (request.headers.get("x-app-token")
+                    or request.query_params.get("token") or "")
+        if not hmac.compare_digest(supplied.encode(), APP_TOKEN.encode()):
+            return JSONResponse({"detail": "앱 토큰이 필요합니다"}, status_code=401)
+    return await call_next(request)
+
+
 # 허용 출처: 기본은 로컬, 배포 시 ALLOWED_ORIGINS(쉼표구분)로 프론트 URL 지정
+# (CORSMiddleware 를 토큰 미들웨어보다 나중에 등록해야 바깥층이 되어
+#  401 응답에도 CORS 헤더가 붙는다 — 프론트가 401 을 읽고 토큰 입력창을 띄움)
 _origins = os.environ.get(
     "ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
 ).split(",")
