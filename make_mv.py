@@ -24,6 +24,7 @@ make_mv.py - 음원 + 가사 -> 유튜브 뮤직비디오 자동 생성
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -483,6 +484,29 @@ def derive_bg_grad(bg_color):
             hx(h - 0.07, l + 0.05, sa + 0.20)]
 
 
+def _kb_dir(seed):
+    """seed(이미지 경로 등) 기반 결정적 방향(-1/+1). 매 렌더 같은 이미지는 같은 방향으로 팬."""
+    h = int(hashlib.md5(str(seed).encode()).hexdigest(), 16)
+    return 1 if h % 2 == 0 else -1
+
+
+def kenburns_zoompan(frames, seed, zmax=1.4):
+    """켄 번스 줌+팬 표현식 (z, x, y).
+
+    zoompan 의 'zoom+델타' 방식은 프레임 수와 무관하게 고정 속도로 커지다가
+    캡(zmax)에 도달하면 멈춰버려서, 곡이 길면 후반부 내내 정지 화면이 된다.
+    대신 on(출력 프레임 번호)/frames 진행률에 smoothstep 이징을 걸어
+    영상 길이 전체에 걸쳐 자연스럽게 감속하는 줌을 만들고,
+    줌이 만든 여백(margin)만큼만 팬 하여 항상 프레임 안에 머물게 한다."""
+    p = f"min(on/{max(1, frames)},1)"
+    ease = f"(3*pow({p},2)-2*pow({p},3))"
+    z = f"1+{zmax - 1:.4f}*{ease}"
+    dirx, diry = _kb_dir(seed), _kb_dir(str(seed) + "y")
+    x = f"iw/2-(iw/zoom/2)+{dirx}*0.5*(iw/2-(iw/zoom/2))"
+    y = f"ih/2-(ih/zoom/2)+{diry}*0.3*(ih/2-(ih/zoom/2))"
+    return z, x, y
+
+
 def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
              bg_style="gradient", bg_grad=None):
     """
@@ -522,10 +546,11 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
         inputs += ["-loop", "1", "-i", os.path.abspath(bg_list[0])]
         if kenburns:
             frames = max(1, round(duration * FPS))
+            z, x, y = kenburns_zoompan(frames, bg_list[0])
             parts.append(
                 f"[0:v]scale={W*2}:{H*2}:force_original_aspect_ratio=increase,"
                 f"crop={W*2}:{H*2},"
-                f"zoompan=z='min(zoom+0.0005,1.4)':d={frames}:s={W}x{H}:fps={FPS},"
+                f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps={FPS},"
                 f"setsar=1[bg]"
             )
         else:
@@ -542,10 +567,11 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
     for i, img in enumerate(bg_list):
         inputs += ["-loop", "1", "-t", f"{L:.3f}", "-i", os.path.abspath(img)]
         if kenburns:
+            z, x, y = kenburns_zoompan(seg_frames, img)
             parts.append(
                 f"[{i}:v]scale={W*2}:{H*2}:force_original_aspect_ratio=increase,"
                 f"crop={W*2}:{H*2},"
-                f"zoompan=z='min(zoom+0.0006,1.4)':d={seg_frames}:s={W}x{H}:fps={FPS},"
+                f"zoompan=z='{z}':x='{x}':y='{y}':d={seg_frames}:s={W}x{H}:fps={FPS},"
                 f"setsar=1[b{i}]"
             )
         else:
@@ -650,6 +676,27 @@ def write_textfile(text, path):
 
 # ---------- 레코드 모드 (회전 원형 앨범아트) ----------
 
+_ROTATE_EVAL_SUPPORTED = None
+
+
+def rotate_eval_flag():
+    """rotate 필터의 'eval' 옵션 지원 여부(캐시).
+
+    구버전 ffmpeg 는 eval 옵션이 있고 기본값이 'init' 이라 각도 표현식(t 포함)이
+    최초 1회만 평가되어 회전이 아예 멈춰 보인다 — eval=frame 필요.
+    신버전(옵션 자체가 사라짐, 예: 8.x)은 항상 프레임마다 재평가하므로
+    eval=frame 을 붙이면 "Option not found" 로 렌더가 실패한다."""
+    global _ROTATE_EVAL_SUPPORTED
+    if _ROTATE_EVAL_SUPPORTED is None:
+        try:
+            out = subprocess.run(["ffmpeg", "-h", "filter=rotate"],
+                                  capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            out = ""
+        _ROTATE_EVAL_SUPPORTED = bool(re.search(r"^\s*eval\s", out, re.MULTILINE))
+    return _ROTATE_EVAL_SUPPORTED
+
+
 def disc_diameter(lay):
     """레코드(원형 앨범아트) 지름. 가로형은 화면 높이, 세로형은 폭 기준."""
     W, H = lay["W"], lay["H"]
@@ -682,7 +729,7 @@ def make_disc_png(src, out_path, size):
 def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            bg_color="0x0a0a14", duration=None, kenburns=True,
            clip_start=None, clip_len=None, watermark=None, logo=None,
-           video_bg=None, crf=20, scale=1.0, preset="medium",
+           video_bg=None, crf=18, scale=1.0, preset="slow",
            normalize=False, master=False, fade_in=0.0, fade_out=0.0,
            vignette=False, grain=False, bg_pulse=False,
            intro_card=False, ic_title="", ic_artist="", gaps=None,
@@ -773,9 +820,11 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         D = disc_diameter(lay)
         disc_idx = audio_idx + 1 + (1 if logo else 0)
         cy = int(H * 0.30) if H > W else int(H * 0.36)  # 세로형은 조금 위
+        rotate_expr = f"rotate=2*PI*t/16:ow={D}:oh={D}:c=black@0"
+        if rotate_eval_flag():
+            rotate_expr += ":eval=frame"
         parts.append(
-            f"[{disc_idx}:v]format=rgba,rotate=2*PI*t/16:ow={D}:oh={D}:"
-            f"c=black@0,fps={FPS}[disc]")
+            f"[{disc_idx}:v]format=rgba,{rotate_expr},fps={FPS}[disc]")
         parts.append(f"{cur}[disc]overlay={(W - D) // 2}:{cy - D // 2}[vdisc]")
         cur = "[vdisc]"
 
@@ -842,7 +891,8 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         parts.append(f"{cur}vignette=PI/4[vvig]")
         cur = "[vvig]"
     if grain:
-        parts.append(f"{cur}noise=alls=8:allf=t[vgrain]")
+        # 루마 채널만 노이즈 -> 컬러 반점 없는 진짜 필름 그레인 느낌
+        parts.append(f"{cur}noise=c0s=10:c0f=t+u[vgrain]")
         cur = "[vgrain]"
     vfades = []
     if fade_in and fade_in > 0:
@@ -857,7 +907,8 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     final_v = cur
 
     # 입력 구성: [배경 이미지들...] [오디오] [로고]
-    cmd = ["ffmpeg", "-y"]
+    # lanczos: 배경 확대/크롭 시 기본(bicubic)보다 또렷한 리샘플링
+    cmd = ["ffmpeg", "-y", "-sws_flags", "lanczos+accurate_rnd+full_chroma_int"]
     cmd += extra_inputs
     if clip_start is not None:
         cmd += ["-ss", f"{clip_start:.3f}"]
@@ -1014,8 +1065,8 @@ def main():
     global FPS
     FPS = args.fps
     scale = {"1080": 1.0, "1440": 4 / 3, "2160": 2.0}[args.res]
-    crf = 20
-    preset = "medium"
+    crf = 18
+    preset = "slow"
     if args.preview_secs > 0:
         # 미리보기: 720p 상당 + 초고속 인코딩 + crf 높임
         scale = min(scale, 720 / 1080)
