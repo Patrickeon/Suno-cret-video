@@ -44,7 +44,12 @@
 - **프론트**: `lib/studio.ts` 에 `apiFetch`(헤더 주입 + 401 시 `mv:unauthorized` 이벤트), `mediaUrl`(쿼리 토큰), localStorage 키 `mv_app_token`. `TokenModal.tsx` 신설 — 401 감지 시 토큰 입력 모달, 저장 후 리로드. page.tsx/PublishPanel.tsx 의 모든 fetch 교체.
 - **deploy.ps1/deploy.sh**: APP_TOKEN 미지정 시 자동 생성(GUID/urandom), 배포 끝에 토큰 출력. 재배포 시 유지하려면 env 로 지정.
 - **검증**: pytest 84개 통과(신규 test_auth.py 5개 포함), `next build` 통과, 로컬 uvicorn 실기동으로 401/헤더/쿼리/오답/health 전부 확인, 401 응답에 CORS 헤더 확인. 브라우저 UI(모달 표시)는 wmux 브라우저 장애로 미확인 — 사용자가 localhost:3000 열어서 확인 가능.
-- **주의**: 아직 GCP 재배포 안 함. 커밋 + `./deploy.ps1` 재배포해야 실제 적용됨.
+- [x] 커밋 완료(`d1dfa23`) + **GCP 재배포 완료 (2026-07-15)** — 실서버 검증 전부 통과:
+  health 무토큰 200 / API 무토큰 401 / 헤더·쿼리 토큰 200 / 오답 401 / 401에 CORS 헤더 / 프론트 200.
+- APP_TOKEN 은 여기 적지 않음(리포 공개 위험). 조회:
+  `gcloud run services describe suno-backend --region asia-northeast3 --format="value(spec.template.spec.containers[0].env)"`
+- **재배포 시 주의**: `$env:APP_TOKEN` 지정 없이 deploy.ps1 돌리면 토큰이 새로 생성됨(로테이션).
+- **GCP 계정 주의**: 프로젝트(vaulted-channel-462701-p0) 권한은 `patrick@5node.co.kr` 계정에만 있음. gmail 계정(01051188129e@gmail.com)은 권한 없음 — gcloud 인증 만료 시 5node 계정으로 재로그인해야 함.
 3. 사용자가 승인한 다음 고도화 후보 (지난 턴에서 제시한 리스트, 아직 미착수):
    - Cloud Run 완전 공개 상태 → 접근 제한(IAM 인증) 적용 — **보안 이슈, 우선순위 높음**
    - Replicate/fal API 키 발급 후 AI 스토리보드 영상 실사용 검증 (현재 mock provider로만 검증됨)
