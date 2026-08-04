@@ -724,6 +724,39 @@ def make_disc_png(src, out_path, size):
     if run(cmd).returncode != 0:
         sys.exit("레코드 모드: 앨범아트 원형 마스킹 실패")
 
+# ---------- 반짝이는 음표 파티클 (배경 장식) ----------
+
+SPARKLE_COUNT = 6
+
+
+def sparkle_params(i):
+    """파티클 i 번째의 결정적 위치/속도/위상 (매 렌더 동일하게 재현, 씨앗=인덱스)."""
+    h = int(hashlib.md5(f"sparkle{i}".encode()).hexdigest(), 16)
+    base_x = h % 997
+    base_y = (h // 997) % 997
+    speed_x = 6 + (h % 11)            # 6~16 px/s, 옆으로 은은하게 표류
+    speed_y = 9 + (h % 13)             # 9~21 px/s, 위로 떠오름
+    phase = (h % 6283) / 1000.0        # 0~2PI 근사
+    period = 2.6 + (h % 9) * 0.3       # 2.6~5.3s 반짝임 주기
+    size = 20 + (h % 3) * 8             # 20/28/36
+    return base_x, base_y, speed_x, speed_y, phase, period, size
+
+
+def build_sparkle(cur, W, H):
+    """cur 레이블 위에 은은히 떠다니는 ♪ 파티클 N개를 순서대로 합성.
+    화면 크기(W+60/H+60)를 mod 로 감싸 좌우/상하 경계 없이 무한 순환한다."""
+    parts = []
+    for i in range(SPARKLE_COUNT):
+        bx, by, sx, sy, phase, period, size = sparkle_params(i)
+        x_expr = f"mod({bx}+{sx}*t,{W}+60)-30"
+        y_expr = f"{H}+30-mod({by}+{sy}*t,{H}+60)"
+        a_expr = f"0.10+0.16*(0.5+0.5*sin(2*PI*t/{period:.3f}+{phase:.3f}))"
+        parts.append(
+            f"{cur}drawtext={symbol_font_spec()}:text='♪':fontcolor=white@0.9:"
+            f"fontsize={size}:x='{x_expr}':y='{y_expr}':alpha='{a_expr}'[vspk{i}]")
+        cur = f"[vspk{i}]"
+    return parts, cur
+
 # ---------- 렌더 ----------
 
 def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
@@ -734,7 +767,8 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            vignette=False, grain=False, bg_pulse=False,
            intro_card=False, ic_title="", ic_artist="", gaps=None,
            viz_colors=None, bg_style="gradient", bg_grad=None,
-           scrim=False, disc_png=None, progress_bar=False):
+           scrim=False, disc_png=None, progress_bar=False,
+           sparkle=False, outro_cta=False, outro_cta_text=""):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
@@ -814,6 +848,11 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         parts.append(f"{cur}{lbl}overlay=0:{lay['viz_y']}:format=auto[vmix{i}]")
         cur = f"[vmix{i}]"
 
+    # ---- 반짝이는 음표 파티클: 은은하게 떠다니는 ♪ (배경 장식) ----
+    if sparkle:
+        spk_parts, cur = build_sparkle(cur, W, H)
+        parts += spk_parts
+
     # ---- 레코드 모드: 원형 앨범아트가 천천히 회전 ----
     disc_idx = None
     if disc_png:
@@ -885,6 +924,21 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         parts.append(
             f"{cur}[pbar]overlay=x='-w+w*t/{duration:.3f}':y={H - ph}[vpb]")
         cur = "[vpb]"
+
+    # ---- 아웃트로 구독 유도 카드: 곡 끝 ~4초에 페이드인 ----
+    if outro_cta and duration:
+        cta_dur = min(4.0, duration)
+        start = max(0.0, duration - cta_dur)
+        text = outro_cta_text or "구독과 좋아요 부탁드려요"
+        write_textfile(text, os.path.join(work_dir, "_outro_cta.txt"))
+        a_expr = (f"alpha='if(lt(t,{start:.3f}),0,"
+                  f"if(lt(t,{start + 0.6:.3f}),(t-{start:.3f})/0.6,1))'")
+        parts.append(
+            f"{cur}drawtext={draw_font_spec()}:textfile=_outro_cta.txt:"
+            f"fontcolor=white:fontsize={int(round(52 * scale))}:"
+            f"x=(w-tw)/2:y=(h-th)/2:{a_expr}:"
+            "shadowcolor=black@0.7:shadowx=2:shadowy=2[vcta]")
+        cur = "[vcta]"
 
     # ---- 영상 피니셔 (분위기) : 비네트 -> 필름그레인 -> 페이드 ----
     if vignette:
@@ -1058,6 +1112,12 @@ def main():
     ap.add_argument("--film-grain", action="store_true", help="필름 그레인(노이즈) 질감")
     ap.add_argument("--bg-pulse", action="store_true",
                     help="오디오 음량에 반응해 배경 밝기가 미세하게 펄스")
+    ap.add_argument("--sparkle", action="store_true",
+                    help="은은하게 떠다니는 ♪ 파티클 (배경 장식)")
+    ap.add_argument("--outro-cta", action="store_true",
+                    help="곡 끝 ~4초에 구독/좋아요 유도 카드 페이드인")
+    ap.add_argument("--outro-cta-text", default="",
+                    help="아웃트로 카드 문구 (기본: '구독과 좋아요 부탁드려요')")
     ap.add_argument("--preview-secs", type=int, default=0,
                     help=">0 이면 앞 N초만 저화질·초고속으로 렌더(미리보기)")
     args = ap.parse_args()
@@ -1171,7 +1231,9 @@ def main():
            intro_card=args.intro_card, ic_title=args.title or "",
            ic_artist=args.artist or "", gaps=gaps,
            viz_colors=args.viz_color, bg_style=args.bg_style, bg_grad=args.bg_grad,
-           scrim=scrim, disc_png=disc_png, progress_bar=args.progress_bar)
+           scrim=scrim, disc_png=disc_png, progress_bar=args.progress_bar,
+           sparkle=args.sparkle, outro_cta=args.outro_cta,
+           outro_cta_text=args.outro_cta_text)
 
     # 썸네일 (미리보기에선 생략)
     if args.title and args.preview_secs == 0:
@@ -1183,7 +1245,8 @@ def main():
 
     if not args.keep_ass:
         for tmp in ("_sub.ass", "_wm.txt", "_ttl.txt", "_art.txt",
-                    "_ic_ttl.txt", "_ic_art.txt", "_pulse.cmd", "_disc.png"):
+                    "_ic_ttl.txt", "_ic_art.txt", "_pulse.cmd", "_disc.png",
+                    "_outro_cta.txt"):
             try:
                 os.remove(os.path.join(out_dir, tmp))
             except OSError:

@@ -162,3 +162,21 @@ def test_disc_art_forwarded_with_video_bg():
     cmd = _build({"video_bg": "clip.mp4", "disc": True}, bg=["art.jpg"])
     assert cmd[cmd.index("--disc-art") + 1] == "art.jpg"
     assert "--video-bg" in cmd and "--bg" not in cmd
+
+
+def test_sparkle_flag():
+    assert "--sparkle" in _build({"sparkle": True})
+    assert "--sparkle" not in _build({})
+
+
+def test_outro_cta_flag_and_text():
+    cmd = _build({"outro_cta": True, "outro_cta_text": "구독 부탁드려요"})
+    assert "--outro-cta" in cmd
+    assert cmd[cmd.index("--outro-cta-text") + 1] == "구독 부탁드려요"
+
+
+def test_outro_cta_text_omitted_when_empty():
+    cmd = _build({"outro_cta": True})
+    assert "--outro-cta" in cmd
+    assert "--outro-cta-text" not in cmd
+    assert "--outro-cta-text" not in _build({})

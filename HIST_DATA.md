@@ -58,6 +58,34 @@
    - 배치 렌더, 채널 프리셋(로고+워터마크+색상 묶음) 저장 기능
 4. 사용자가 "이제 기능 및 전수 테스트 진행"한다고 했었음 — 테스트하다 나오는 버그들 계속 수정해주는 게 이 세션의 기본 모드.
 
+### 4. 스튜디오 점검 + 신규 장식 기능 2종 (2026-08-04 세션) — 구현+검증 완료, 커밋 대기
+
+사용자가 "레코드판 돌아가는 부분 다시 확인 + 추가할만한 예쁜 기능"을 요청.
+
+- **레코드 회전 재검증**: 로컬 ffmpeg 8.0.1로 실제 렌더(`--disc`) 후 t=0.5s/t=4.5s 프레임을
+  크롭·diff — 74.6% 픽셀이 유의미하게 변함(임계값>10) → 정상 회전 확인, 회귀 없음.
+- **✨ 반짝이는 음표 파티클 (`--sparkle`)**: `sparkle_params(i)`(md5 시드로 결정적 위치/속도/
+  위상/주기) + `build_sparkle()`가 ♪ 6개를 `mod()`로 화면을 순환 표류시키며 sin 파형으로
+  은은하게 반짝임(알파 0.10~0.26). 배경/비주얼라이저 위, 레코드/자막 아래 레이어.
+- **📢 아웃트로 구독 유도 카드 (`--outro-cta`, `--outro-cta-text`)**: 곡 끝 ~4초 구간에
+  텍스트가 0.6초간 페이드인. 인트로 카드와 같은 alpha 패턴 재사용.
+- 배선: `make_mv.py`(CLI+render()) → `backend/render.py`(build_command) →
+  `backend/main.py`(Form 필드+opts dict) → `backend/agent.py`(EDIT_TOOL, 자연어 편집 노출) →
+  `frontend/app/page.tsx`(토글 2개 + 아웃트로 문구 입력, 프리셋 저장/복원 포함).
+- **검증**: pytest 84→89개(신규 5개: sparkle_params/build_sparkle/sparkle 플래그/
+  outro_cta 플래그+문구/문구 생략) 전부 통과. 실제 렌더(`--disc --sparkle --outro-cta`
+  동시 사용) 성공 — t=1s/3.5s 프레임 diff로 파티클 움직임 확인(18.8% 픽셀 변화),
+  t=0.5s vs t=7.5s 중앙 밴드 밝기 비교로 아웃트로 카드 등장 확인(9995 vs 2913 밝은 픽셀).
+
+**⚠️ 이번 세션에서 발견한 중요 리스크 (다음 세션 최우선 확인)**:
+GCP 프로젝트(`vaulted-channel-462701-p0`) 권한이 **`patrick@5node.co.kr` 계정에만** 있음
+(위 "GCP 계정 주의" 참고). 이 계정은 사용자가 **삭제할 예정**이라고 다른 대화에서 밝힘 —
+계정이 실제로 삭제되면 이 프로젝트의 gcloud 인증/재배포/IAM 관리 권한을 통째로 잃을 수 있음.
+**계정 삭제 전에 반드시 `01051188129e@gmail.com`(gmail)에 이 GCP 프로젝트의 Owner/Editor
+IAM 권한을 추가해둘 것.** (`gcloud projects add-iam-policy-binding vaulted-channel-462701-p0
+--member=user:01051188129e@gmail.com --role=roles/owner`) Suno AI 계정 이전과 별개로,
+이쪽도 계정 삭제 전에 처리해야 하는 항목.
+
 ## 참고
 
 - 리포: `C:\Users\patrick\music-video-maker` (GitHub Patrickeon/Suno-cret-video)

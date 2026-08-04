@@ -186,3 +186,23 @@ def test_disc_diameter_even_and_orientation():
     assert d_land % 2 == 0 and d_short % 2 == 0
     assert d_land == int(1080 * 0.42) - (int(1080 * 0.42) % 2)
     assert d_short == int(1080 * 0.55) - (int(1080 * 0.55) % 2)
+
+
+def test_sparkle_params_deterministic_and_in_range():
+    a = mv.sparkle_params(0)
+    b = mv.sparkle_params(0)
+    assert a == b  # 같은 인덱스는 항상 같은 파라미터(재현 가능)
+    seen = {mv.sparkle_params(i) for i in range(mv.SPARKLE_COUNT)}
+    assert len(seen) == mv.SPARKLE_COUNT  # 파티클마다 서로 다른 파라미터
+    for _, _, sx, sy, _, period, size in seen:
+        assert sx > 0 and sy > 0  # 항상 오른쪽/위쪽으로 표류
+        assert period > 0
+        assert size > 0
+
+
+def test_build_sparkle_chains_all_particles():
+    parts, cur = mv.build_sparkle("[in]", 1920, 1080)
+    assert len(parts) == mv.SPARKLE_COUNT
+    assert cur == f"[vspk{mv.SPARKLE_COUNT - 1}]"
+    assert parts[0].startswith("[in]drawtext=")
+    assert all("alpha=" in p and "text='♪'" in p for p in parts)

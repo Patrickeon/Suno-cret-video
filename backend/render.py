@@ -93,6 +93,12 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--film-grain"]
     if opts.get("bg_pulse"):
         cmd += ["--bg-pulse"]
+    if opts.get("sparkle"):
+        cmd += ["--sparkle"]
+    if opts.get("outro_cta"):
+        cmd += ["--outro-cta"]
+        if opts.get("outro_cta_text"):
+            cmd += ["--outro-cta-text", str(opts["outro_cta_text"])]
     # 자막 스타일
     if opts.get("sub_color") and str(opts["sub_color"]).upper() != "FFFFFF":
         cmd += ["--sub-color", str(opts["sub_color"])]

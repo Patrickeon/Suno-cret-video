@@ -87,6 +87,9 @@ export default function Home() {
   const [vignette, setVignette] = useState(false);
   const [filmGrain, setFilmGrain] = useState(false);
   const [bgPulse, setBgPulse] = useState(false);
+  const [sparkle, setSparkle] = useState(false);
+  const [outroCta, setOutroCta] = useState(false);
+  const [outroCtaText, setOutroCtaText] = useState("");
 
   // 잡 / 결과
   const [job, setJob] = useState<Job | null>(null);
@@ -209,6 +212,7 @@ export default function Home() {
       viz, vizColor, bgGrad, disc, progressBar, subPreview,
       shorts, kenburns, bgColor, watermark, align, res, fps,
       normalize, master, karaoke, fadeIn, fadeOut, vignette, filmGrain,
+      sparkle, outroCta, outroCtaText,
       subColor, subSize, subPos, clipLen,
     };
     persistPresets({ ...presets, [name]: snap });
@@ -241,6 +245,9 @@ export default function Home() {
     setFadeOut(num("fadeOut", 0));
     setVignette(b("vignette", false));
     setFilmGrain(b("filmGrain", false));
+    setSparkle(b("sparkle", false));
+    setOutroCta(b("outroCta", false));
+    setOutroCtaText(str("outroCtaText", ""));
     setSubColor(str("subColor", "FFFFFF"));
     setSubSize(num("subSize", 1));
     setSubPos(str("subPos", "bottom"));
@@ -319,6 +326,9 @@ export default function Home() {
       fd.append("vignette", String(vignette));
       fd.append("film_grain", String(filmGrain));
       fd.append("bg_pulse", String(bgPulse));
+      fd.append("sparkle", String(sparkle));
+      fd.append("outro_cta", String(outroCta));
+      if (outroCtaText.trim()) fd.append("outro_cta_text", outroCtaText);
       fd.append("sub_color", subColor);
       fd.append("sub_size", String(subSize));
       fd.append("sub_pos", subPos);
@@ -368,6 +378,9 @@ export default function Home() {
       fd.append("vignette", String(vignette));
       fd.append("film_grain", String(filmGrain));
       fd.append("bg_pulse", String(bgPulse));
+      fd.append("sparkle", String(sparkle));
+      fd.append("outro_cta", String(outroCta));
+      if (outroCtaText.trim()) fd.append("outro_cta_text", outroCtaText);
       fd.append("watermark", watermark);
       fd.append("title", f.name.replace(/\.[^.]+$/, ""));
       try {
@@ -1037,6 +1050,19 @@ export default function Home() {
                 <Toggle checked={bgPulse} onChange={setBgPulse} label="🔊 오디오 반응 배경 (음량에 밝기 펄스)" />
                 <Toggle checked={introCard} onChange={setIntroCard} label="🎬 인트로 타이틀 카드 (제목/아티스트 페이드인)" />
                 <Toggle checked={interludeNote} onChange={setInterludeNote} label="🎵 간주 구간에 ♪ 표시" />
+                <Toggle checked={sparkle} onChange={setSparkle} label="✨ 반짝이는 음표 파티클 (은은한 배경 장식)" />
+                <Toggle checked={outroCta} onChange={setOutroCta} label="📢 아웃트로 구독 유도 카드 (곡 끝 ~4초)" />
+                {outroCta && (
+                  <Field label="아웃트로 문구 (비우면 기본 문구)">
+                    <input
+                      type="text"
+                      value={outroCtaText}
+                      onChange={(e) => setOutroCtaText(e.target.value)}
+                      placeholder="구독과 좋아요 부탁드려요"
+                      className={inputCls}
+                    />
+                  </Field>
+                )}
                 <Toggle checked={autoRetry} onChange={setAutoRetry} label="🔁 실패 시 자동 재시도 (1회)" />
               </Card>
 
