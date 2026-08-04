@@ -47,6 +47,7 @@ export default function Home() {
   const [vizColor, setVizColor] = useState(""); // ""=기본 파스텔 그라데이션
   const [bgGrad, setBgGrad] = useState("");     // ""=bg_color 에서 자동 유도
   const [disc, setDisc] = useState(false);       // 레코드(회전 앨범아트) 모드
+  const [discBgStyle, setDiscBgStyle] = useState("off"); // 레코드 배경: off/glow/radial
   const [progressBar, setProgressBar] = useState(false);
   const [subPreview, setSubPreview] = useState(true); // 다음 소절 미리보기
   const [paletteBusy, setPaletteBusy] = useState(false);
@@ -209,7 +210,7 @@ export default function Home() {
     const name = window.prompt("프리셋 이름을 입력하세요")?.trim();
     if (!name) return;
     const snap = {
-      viz, vizColor, bgGrad, disc, progressBar, subPreview,
+      viz, vizColor, bgGrad, disc, discBgStyle, progressBar, subPreview,
       shorts, kenburns, bgColor, watermark, align, res, fps,
       normalize, master, karaoke, fadeIn, fadeOut, vignette, filmGrain,
       sparkle, outroCta, outroCtaText,
@@ -229,6 +230,7 @@ export default function Home() {
     setVizColor(str("vizColor", ""));
     setBgGrad(str("bgGrad", ""));
     setDisc(b("disc", false));
+    setDiscBgStyle(str("discBgStyle", "off"));
     setProgressBar(b("progressBar", false));
     setSubPreview(b("subPreview", true));
     setShorts(b("shorts", false));
@@ -305,6 +307,7 @@ export default function Home() {
       if (vizColor) fd.append("viz_color", vizColor);
       if (bgGrad) fd.append("bg_grad", bgGrad);
       fd.append("disc", String(disc));
+      if (discBgStyle !== "off") fd.append("disc_bg_style", discBgStyle);
       fd.append("progress_bar", String(progressBar));
       fd.append("sub_preview", String(subPreview));
       fd.append("shorts", String(shorts));
@@ -367,6 +370,7 @@ export default function Home() {
       if (vizColor) fd.append("viz_color", vizColor);
       if (bgGrad) fd.append("bg_grad", bgGrad);
       fd.append("disc", String(disc));
+      if (discBgStyle !== "off") fd.append("disc_bg_style", discBgStyle);
       fd.append("progress_bar", String(progressBar));
       fd.append("sub_preview", String(subPreview));
       fd.append("res", res);
@@ -960,6 +964,15 @@ export default function Home() {
                 )}
                 <Toggle checked={kenburns} onChange={setKenburns} label="배경 켄 번스(줌·팬) 효과" />
                 <Toggle checked={disc} onChange={setDisc} label="💿 레코드 모드 (첫 배경 이미지가 원형으로 회전)" />
+                {disc && (
+                  <Field label="레코드 배경 스타일">
+                    <select value={discBgStyle} onChange={(e) => setDiscBgStyle(e.target.value)} className={inputCls}>
+                      <option value="off">기본 (배경 그대로)</option>
+                      <option value="glow">✨ 글로우 (앨범아트 블러+채도업으로 배경 채움)</option>
+                      <option value="radial">🌈 헤일로 (디스크 뒤 컬러 글로우, 음악에 반응)</option>
+                    </select>
+                  </Field>
+                )}
                 <Toggle checked={progressBar} onChange={setProgressBar} label="⏳ 곡 진행바 (하단 얇은 라인)" />
               </Card>
 

@@ -508,12 +508,17 @@ def kenburns_zoompan(frames, seed, zmax=1.4):
 
 
 def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
-             bg_style="gradient", bg_grad=None):
+             bg_style="gradient", bg_grad=None, disc_bg_style="off"):
     """
     배경 비디오 체인 빌드.
     반환: (extra_inputs, filter_parts, bg_label, audio_idx)
       extra_inputs: 배경 입력 -i 인자 리스트(앞쪽). audio_idx = 배경 입력 개수.
     우선순위: video_bg(영상) > bg_list(이미지) > 그라데이션/단색.
+
+    disc_bg_style="glow" 면 이미지 배경(단일/다중 공통)을 블러+채도업 처리해 레코드
+    모드 배경을 앨범아트 색감으로 가득 채운다(스포티파이 '재생 중' 화면 느낌). 밝기는
+    일부러 건드리지 않음 — 이미 어두운 앨범아트를 더 죽이면 오히려 칙칙해지고, 자막
+    가독성은 별도의 scrim(하단 그라데이션)이 이미 담당하므로 중복 어둡힘이 불필요.
     """
     W, H = lay["W"], lay["H"]
 
@@ -542,8 +547,11 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
     parts = []
     n = len(bg_list)
 
+    glow = disc_bg_style == "glow"
+
     if n == 1:
         inputs += ["-loop", "1", "-i", os.path.abspath(bg_list[0])]
+        lbl = "[bgraw]" if glow else "[bg]"
         if kenburns:
             frames = max(1, round(duration * FPS))
             z, x, y = kenburns_zoompan(frames, bg_list[0])
@@ -551,13 +559,16 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
                 f"[0:v]scale={W*2}:{H*2}:force_original_aspect_ratio=increase,"
                 f"crop={W*2}:{H*2},"
                 f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps={FPS},"
-                f"setsar=1[bg]"
+                f"setsar=1{lbl}"
             )
         else:
             parts.append(
                 f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
-                f"crop={W}:{H},setsar=1,fps={FPS}[bg]"
+                f"crop={W}:{H},setsar=1,fps={FPS}{lbl}"
             )
+        if glow:
+            parts.append(
+                "[bgraw]gblur=sigma=42:steps=2,eq=saturation=1.4[bg]")
         return inputs, parts, "[bg]", 1
 
     # 다중 이미지: 각 L초씩 zoompan 후 xfade 크로스페이드
@@ -582,12 +593,16 @@ def build_bg(bg_list, lay, duration, kenburns, bg_color, video_bg=None,
     prev = "b0"
     for i in range(1, n):
         offset = i * (L - fade)
-        out_lbl = "bg" if i == n - 1 else f"x{i}"
+        out_lbl = ("bgraw" if glow else "bg") if i == n - 1 else f"x{i}"
         parts.append(
             f"[{prev}][b{i}]xfade=transition=fade:duration={fade}:"
             f"offset={offset:.3f}[{out_lbl}]"
         )
         prev = out_lbl
+    if glow:
+        parts.append(
+            "[bgraw]gblur=sigma=42:steps=2,"
+            "eq=brightness=-0.10:saturation=1.35[bg]")
     return inputs, parts, "[bg]", n
 
 # 비주얼라이저 기본 그라데이션 — 파스텔 스카이 -> 연보라 핑크 (드리미한 느낌)
@@ -768,14 +783,16 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            intro_card=False, ic_title="", ic_artist="", gaps=None,
            viz_colors=None, bg_style="gradient", bg_grad=None,
            scrim=False, disc_png=None, progress_bar=False,
-           sparkle=False, outro_cta=False, outro_cta_text=""):
+           sparkle=False, outro_cta=False, outro_cta_text="",
+           disc_bg_style="off"):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
 
     extra_inputs, bg_parts, bg_label, audio_idx = build_bg(
         bg_list, lay, duration, kenburns, bg_color, video_bg=video_bg,
-        bg_style=bg_style, bg_grad=bg_grad)
+        bg_style=bg_style, bg_grad=bg_grad,
+        disc_bg_style=(disc_bg_style if disc_png else "off"))
     audio_spec = f"{audio_idx}:a"
 
     parts = list(bg_parts)
@@ -853,12 +870,50 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         spk_parts, cur = build_sparkle(cur, W, H)
         parts += spk_parts
 
-    # ---- 레코드 모드: 원형 앨범아트가 천천히 회전 ----
+    # ---- 레코드 모드: 원형 앨범아트가 천천히 회전 (+선택: 배경 헤일로) ----
     disc_idx = None
     if disc_png:
         D = disc_diameter(lay)
-        disc_idx = audio_idx + 1 + (1 if logo else 0)
         cy = int(H * 0.30) if H > W else int(H * 0.36)  # 세로형은 조금 위
+
+        # 배경 헤일로: 디스크 뒤에서 은은한 컬러 글로우가 음악(RMS)에 반응해 반짝임.
+        # geq 알파 낙차로 소프트 엣지 원을 만들고(추가 -i 입력 불필요, 합성 소스),
+        # bg_pulse 와 동일한 RMS 엔벨로프 -> sendcmd -> eq brightness 패턴을 재사용한다.
+        if disc_bg_style == "radial":
+            HD = int(D * 1.8)
+            HD -= HD % 2
+            hc = (HD - 1) / 2
+            hr = HD / 2
+            accent = norm_hex((viz_colors or [None])[0], DEFAULT_VIZ_COLORS[0])
+            ar, ag, ab = int(accent[0:2], 16), int(accent[2:4], 16), int(accent[4:6], 16)
+            a_expr = f"200*clip(1-hypot(X-{hc:.1f},Y-{hc:.1f})/{hr:.1f},0,1.0)"
+            parts.append(
+                f"color=c=black:s={HD}x{HD}:r={FPS},format=gbrap,"
+                f"geq=r={ar}:g={ag}:b={ab}:a='{a_expr}'[haloraw]")
+            halo_label = "[haloraw]"
+            env = audio_rms_envelope(audio)
+            if env:
+                vals = sorted(d for _, d in env)
+                base_lvl = vals[len(vals) // 2]
+                off = clip_start or 0.0
+                lines = []
+                for t, d in env:
+                    ot = t - off
+                    if ot < 0 or (duration and ot > duration):
+                        continue
+                    b = max(-0.10, min(0.30, (d - base_lvl) * 0.035))
+                    lines.append(f"{ot:.2f} eq brightness {b:.3f};")
+                if lines:
+                    write_textfile("\n".join(lines),
+                                   os.path.join(work_dir, "_halo_pulse.cmd"))
+                    parts.append(f"{halo_label}sendcmd=f=_halo_pulse.cmd,"
+                                 f"eq=brightness=0:eval=frame[halop]")
+                    halo_label = "[halop]"
+            parts.append(
+                f"{cur}{halo_label}overlay=(W-{HD})/2:{cy - HD // 2}[vhalo]")
+            cur = "[vhalo]"
+
+        disc_idx = audio_idx + 1 + (1 if logo else 0)
         rotate_expr = f"rotate=2*PI*t/16:ow={D}:oh={D}:c=black@0"
         if rotate_eval_flag():
             rotate_expr += ":eval=frame"
@@ -1060,6 +1115,9 @@ def main():
     ap.add_argument("--disc", action="store_true",
                     help="레코드 모드: 원형 앨범아트가 중앙에서 천천히 회전")
     ap.add_argument("--disc-art", help="레코드 모드 앨범아트 (기본: 첫 --bg 이미지)")
+    ap.add_argument("--disc-bg-style", choices=["off", "glow", "radial"], default="off",
+                    help="레코드 모드 배경: glow=앨범아트 블러+글로우로 배경 전체 대체, "
+                         "radial=디스크 뒤 컬러 헤일로가 음악(RMS)에 반응해 반짝임")
     ap.add_argument("--progress-bar", action="store_true",
                     help="하단 곡 진행바 (파형 색과 통일)")
     # 가사 싱크
@@ -1233,7 +1291,8 @@ def main():
            viz_colors=args.viz_color, bg_style=args.bg_style, bg_grad=args.bg_grad,
            scrim=scrim, disc_png=disc_png, progress_bar=args.progress_bar,
            sparkle=args.sparkle, outro_cta=args.outro_cta,
-           outro_cta_text=args.outro_cta_text)
+           outro_cta_text=args.outro_cta_text,
+           disc_bg_style=args.disc_bg_style)
 
     # 썸네일 (미리보기에선 생략)
     if args.title and args.preview_secs == 0:
@@ -1246,7 +1305,7 @@ def main():
     if not args.keep_ass:
         for tmp in ("_sub.ass", "_wm.txt", "_ttl.txt", "_art.txt",
                     "_ic_ttl.txt", "_ic_art.txt", "_pulse.cmd", "_disc.png",
-                    "_outro_cta.txt"):
+                    "_outro_cta.txt", "_halo_pulse.cmd"):
             try:
                 os.remove(os.path.join(out_dir, tmp))
             except OSError:

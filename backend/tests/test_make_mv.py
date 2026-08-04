@@ -200,6 +200,27 @@ def test_sparkle_params_deterministic_and_in_range():
         assert size > 0
 
 
+def test_build_bg_glow_applies_blur_and_saturation_not_brightness():
+    _, parts, label, _ = mv.build_bg(
+        ["bg1.jpg"], mv.get_layout(False), 8.0, True, "0x0a0a14",
+        disc_bg_style="glow")
+    joined = ";".join(parts)
+    assert "gblur=sigma=42" in joined
+    assert "eq=saturation=1.4" in joined
+    # 어두운 앨범아트를 더 죽이지 않도록 밝기(brightness)는 건드리지 않는다
+    assert "brightness" not in joined
+    assert label == "[bg]"
+
+
+def test_build_bg_off_style_has_no_blur():
+    _, parts, label, _ = mv.build_bg(
+        ["bg1.jpg"], mv.get_layout(False), 8.0, True, "0x0a0a14",
+        disc_bg_style="off")
+    joined = ";".join(parts)
+    assert "gblur" not in joined
+    assert label == "[bg]"
+
+
 def test_build_sparkle_chains_all_particles():
     parts, cur = mv.build_sparkle("[in]", 1920, 1080)
     assert len(parts) == mv.SPARKLE_COUNT

@@ -180,3 +180,10 @@ def test_outro_cta_text_omitted_when_empty():
     assert "--outro-cta" in cmd
     assert "--outro-cta-text" not in cmd
     assert "--outro-cta-text" not in _build({})
+
+
+def test_disc_bg_style_forwarded_and_off_omitted():
+    cmd = _build({"disc": True, "disc_bg_style": "glow"})
+    assert cmd[cmd.index("--disc-bg-style") + 1] == "glow"
+    assert "--disc-bg-style" not in _build({"disc": True, "disc_bg_style": "off"})
+    assert "--disc-bg-style" not in _build({"disc": True})

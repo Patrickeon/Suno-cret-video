@@ -43,6 +43,8 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
             cmd += ["--bg-grad"] + [str(c) for c in bg_grad]
     if opts.get("disc"):
         cmd += ["--disc"]
+    if opts.get("disc_bg_style") and opts["disc_bg_style"] != "off":
+        cmd += ["--disc-bg-style", str(opts["disc_bg_style"])]
     if opts.get("progress_bar"):
         cmd += ["--progress-bar"]
     if opts.get("sub_preview"):

@@ -73,6 +73,10 @@ EDIT_TOOL = {
                         "description": "그라데이션 배경 색 2~3개, 쉼표 구분 RRGGBB (어두운 톤 권장)"},
             "disc": {"type": "boolean",
                      "description": "레코드 모드: 원형 앨범아트(첫 배경 이미지)가 중앙에서 회전"},
+            "disc_bg_style": {"type": "string", "enum": ["off", "glow", "radial"],
+                               "description": "레코드 모드 배경: glow=앨범아트 블러+채도업으로 "
+                                              "배경 전체 대체, radial=디스크 뒤 컬러 헤일로가 "
+                                              "음악(RMS)에 반응해 반짝임. disc가 true일 때만 의미"},
             "progress_bar": {"type": "boolean", "description": "하단 곡 진행바"},
             "sub_preview": {"type": "boolean",
                             "description": "다음 소절 미리보기 (현재 가사 아래 작고 흐리게)"},
