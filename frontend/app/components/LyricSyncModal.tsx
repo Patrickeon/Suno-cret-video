@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { isSectionTagLine } from "../lib/studio";
 
 function fmtLrc(t: number) {
   const m = Math.floor(t / 60);
@@ -19,10 +20,15 @@ export function LyricSyncModal({
   onApply: (lrc: string) => void;
   onClose: () => void;
 }) {
-  const lines = useMemo(
+  const rawLines = useMemo(
     () => lyrics.split("\n").map((l) => l.trim()).filter(Boolean),
     [lyrics],
   );
+  const lines = useMemo(
+    () => rawLines.filter((l) => !isSectionTagLine(l)),
+    [rawLines],
+  );
+  const droppedCount = rawLines.length - lines.length;
   const url = useMemo(() => URL.createObjectURL(audio), [audio]);
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
 
@@ -76,6 +82,11 @@ export function LyricSyncModal({
           재생하면서 각 가사가 시작되는 순간 <b>스페이스바</b> 또는 <b>지금</b> 버튼을 누르세요.
           누른 시점이 그 줄의 시작 시간(LRC)이 됩니다.
         </p>
+        {droppedCount > 0 && (
+          <p className="text-[11px] text-[var(--text-faint)]">
+            섹션 태그 {droppedCount}줄은 자동 제외됨 (예: [Verse 1], [Chorus])
+          </p>
+        )}
 
         <audio ref={audioRef} src={url} controls className="w-full" />
 

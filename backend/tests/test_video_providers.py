@@ -53,3 +53,46 @@ def test_mock_generates_clip(tmp_path):
     p.generate("dreamy night city", out, duration=1, aspect="16:9")
     import os
     assert os.path.exists(out) and os.path.getsize(out) > 1000
+
+
+# ─────────────────────────────────────────────────────────────
+# 이미지 생성 provider (앨범 커버 등) — 영상용과는 별개 레지스트리
+# ─────────────────────────────────────────────────────────────
+
+def test_image_mock_keyless():
+    assert "mock" in vp.IMAGE_KEYLESS_PROVIDERS
+    p = vp.get_image_provider("mock")  # 키 없이 생성 가능
+    assert isinstance(p, vp._MockImageProvider)
+
+
+def test_image_mock_generates_image(tmp_path):
+    p = vp.get_image_provider("mock")
+    out = str(tmp_path / "cover.png")
+    p.generate("a dreamy sunset, no text", out)
+    import os
+    assert os.path.exists(out) and os.path.getsize(out) > 0
+
+
+def test_image_replicate_default_model(monkeypatch):
+    monkeypatch.delenv("REPLICATE_IMAGE_MODEL", raising=False)
+    p = vp.get_image_provider("replicate", api_key="test-key")
+    assert isinstance(p, vp.ReplicateProvider)
+    assert p.model == vp.DEFAULT_REPLICATE_IMAGE_MODEL
+    assert p.base_url.startswith("https://api.replicate.com")
+
+
+def test_image_replicate_model_override_via_kw(monkeypatch):
+    monkeypatch.delenv("REPLICATE_IMAGE_MODEL", raising=False)
+    p = vp.get_image_provider("replicate", api_key="test-key", model="custom/img-model")
+    assert p.model == "custom/img-model"
+
+
+def test_image_replicate_model_override_via_env(monkeypatch):
+    monkeypatch.setenv("REPLICATE_IMAGE_MODEL", "env/img-model")
+    p = vp.get_image_provider("replicate", api_key="test-key")
+    assert p.model == "env/img-model"
+
+
+def test_image_unknown_provider_raises():
+    with pytest.raises(ValueError):
+        vp.get_image_provider("does-not-exist", api_key="k")

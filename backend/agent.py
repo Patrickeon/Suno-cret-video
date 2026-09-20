@@ -3,7 +3,10 @@
 Claude로 시작하되, 다른 provider로 교체 가능하도록 인터페이스를 분리한다.
 (Phase 3 에서 이 위에 '자연어 -> 편집 도구 호출' 에이전트를 구현)
 """
+import json
 import os
+import shutil
+import subprocess
 from abc import ABC, abstractmethod
 
 
@@ -19,7 +22,7 @@ class LLMProvider(ABC):
 class ClaudeProvider(LLMProvider):
     """Anthropic Claude. tool use(도구 호출)에 강해 편집 에이전트에 적합."""
 
-    def __init__(self, model="claude-sonnet-4-6", api_key=None):
+    def __init__(self, model="claude-sonnet-5", api_key=None):
         import anthropic
         self.client = anthropic.Anthropic(
             api_key=api_key or os.environ.get("ANTHROPIC_API_KEY")
@@ -36,9 +39,119 @@ class ClaudeProvider(LLMProvider):
         )
 
 
+def _content_to_text(content):
+    """messages[i]['content'] (문자열 또는 block dict 리스트) -> 평문 텍스트."""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content or []:
+        if not isinstance(block, dict):
+            continue
+        t = block.get("type")
+        if t == "text":
+            parts.append(block.get("text", ""))
+        elif t == "tool_use":
+            parts.append(f"[tool_use {block.get('name')}: {json.dumps(block.get('input'), ensure_ascii=False)}]")
+        elif t == "tool_result":
+            parts.append(f"[tool_result: {block.get('content')}]")
+    return "\n".join(parts)
+
+
+def _flatten_messages(messages):
+    """Anthropic 스타일 messages 리스트 -> claude CLI 용 단일 프롬프트 문자열."""
+    lines = []
+    for m in messages or []:
+        text = _content_to_text(m.get("content"))
+        if text:
+            lines.append(f"[{m.get('role', 'user')}] {text}")
+    return "\n\n".join(lines)
+
+
+class _CLIBlock:
+    def __init__(self, type_, text=None, name=None, input=None, id=None):
+        self.type = type_
+        self.text = text
+        self.name = name
+        self.input = input
+        self.id = id
+
+
+class _CLIResponse:
+    def __init__(self, content):
+        self.content = content
+
+
+class ClaudeCLIProvider(LLMProvider):
+    """claude CLI(로컬 로그인 세션)를 통해 호출 — API 키가 필요 없다.
+    매 chat() 호출은 독립적인(stateless) `claude -p` 1회 실행이다.
+
+    ⚠️ 알려진 한계 (실제 CLI로 검증됨, 기본 provider로 쓰지 않는 이유):
+    `--system-prompt` 로 커스텀 페르소나/지시를 줘도, 제목+가사처럼 맥락이
+    짧고 모호해 보이는 입력에 대해 모델이 Claude Code 기본 어시스턴트 태도로
+    돌아가 "무엇을 원하시나요?" 식으로 되묻고 구조화 출력(`--json-schema`)을
+    아예 생성하지 않는 경우가 많다 (도구 호출 문구 유무, --disallowedTools
+    유무, 작업 디렉터리와 무관하게 재현됨). 반면 완전히 자기완결적인 지시문
+    ("Return a short JSON object")에는 정상 동작한다. palette/storyboard/
+    metadata/translation/edit 처럼 짧은 데이터 입력을 그대로 분석해야 하는
+    이 프로젝트의 실사용 패턴에서는 신뢰도가 낮아 settings.py 기본값에서
+    제외했다 — provider 선택지로는 남겨두되, API 키 방식(ClaudeProvider)을
+    기본으로 유지한다."""
+
+    def __init__(self, model="claude-sonnet-5", api_key=None):
+        # api_key 는 인터페이스 일관성을 위해 받지만 CLI 모드에서는 쓰지 않는다.
+        self.model = model
+
+    def chat(self, system, messages, tools=None, max_tokens=2048):
+        prompt = _flatten_messages(messages) or "(empty)"
+        # Windows 에선 claude 가 claude.cmd 셸 래퍼라 subprocess.run(["claude", ...])
+        # 가 shell=True 없이는 CreateProcess 로 못 찾는다 — shutil.which 로 PATHEXT
+        # 까지 반영한 실제 실행 파일 경로를 미리 찾아 넘긴다.
+        exe = shutil.which("claude") or "claude"
+        cmd = [
+            exe, "-p", prompt,
+            "--system-prompt", system,
+            "--model", self.model,
+            "--output-format", "json",
+            "--disallowedTools",
+            "Bash Edit Write Read Glob Grep WebFetch WebSearch Task",
+            "--permission-mode", "dontAsk",
+        ]
+        tool = (tools or [None])[0]
+        if tool:
+            cmd += ["--json-schema", json.dumps(tool["input_schema"], ensure_ascii=False)]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=120,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "claude CLI 를 찾을 수 없습니다. Claude Code 가 설치·로그인되어 "
+                "있는지 확인하세요 (claude login)."
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("claude CLI 호출 시간 초과(120초)")
+        if proc.returncode != 0:
+            raise RuntimeError(f"claude CLI 호출 실패: {(proc.stderr or '')[-500:]}")
+        try:
+            data = json.loads(proc.stdout)
+        except ValueError:
+            raise RuntimeError(f"claude CLI 응답 파싱 실패: {proc.stdout[-500:]}")
+        if data.get("is_error"):
+            raise RuntimeError(f"claude CLI 오류: {data.get('result')}")
+        if tool and data.get("structured_output") is not None:
+            block = _CLIBlock("tool_use", name=tool["name"],
+                               input=data["structured_output"],
+                               id=data.get("session_id", "cli"))
+        else:
+            block = _CLIBlock("text", text=data.get("result", ""))
+        return _CLIResponse([block])
+
+
 # 다른 provider 추가 시 여기에 등록 (예: OpenAIProvider)
 _PROVIDERS = {
     "claude": ClaudeProvider,
+    "claude-cli": ClaudeCLIProvider,
 }
 
 
@@ -183,6 +296,51 @@ def suggest_palette(title, lyrics, provider_name="claude", model=None, api_key=N
         if b.type == "tool_use" and b.name == "set_palette":
             return dict(b.input or {})
     return {}
+
+
+# ─────────────────────────────────────────────────────────────
+# AI 앨범 커버 — 제목/가사 분위기 -> text-to-image 프롬프트
+# ─────────────────────────────────────────────────────────────
+
+ALBUM_COVER_TOOL = {
+    "name": "set_album_cover_prompt",
+    "description": "곡 분위기에 맞는 앨범 커버 이미지 생성 프롬프트를 지정한다.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string",
+                       "description": "text-to-image 용 영어 프롬프트. 스타일/색감/구도를 "
+                                      "구체적으로. 글자·텍스트·워터마크 없이"},
+        },
+        "required": ["prompt"],
+    },
+}
+
+ALBUM_COVER_SYSTEM = """당신은 앨범 커버 아트디렉터입니다. 곡 제목과 가사의 분위기를 읽고
+set_album_cover_prompt 도구로 어울리는 text-to-image 프롬프트를 만드세요.
+- 영어로, 스타일(일러스트/사진/추상 등)·색감·구도를 구체적으로 묘사하세요.
+- 이미지 안에 글자·텍스트·로고·워터마크가 나오지 않게 "no text, no typography, no watermark"를
+  포함하세요.
+- 정사각형 앨범 커버로 쓰일 것이므로 중앙에 주제가 오는 균형 잡힌 구도를 선호하세요.
+반드시 도구를 호출하세요."""
+
+
+def generate_album_cover_prompt(title, lyrics, provider_name="claude",
+                                model=None, api_key=None):
+    """곡 정보 -> 이미지 생성 프롬프트 문자열. 도구 미호출 시 빈 문자열."""
+    kw = {}
+    if model:
+        kw["model"] = model
+    if api_key:
+        kw["api_key"] = api_key
+    provider = get_provider(provider_name, **kw)
+    user = (f"제목: {title or '(미정)'}\n\n가사:\n{(lyrics or '(가사 없음 — 분위기는 제목으로 유추)')[:2000]}")
+    resp = provider.chat(ALBUM_COVER_SYSTEM, [{"role": "user", "content": user}],
+                         tools=[ALBUM_COVER_TOOL])
+    for b in resp.content:
+        if b.type == "tool_use" and b.name == "set_album_cover_prompt":
+            return str((b.input or {}).get("prompt") or "").strip()
+    return ""
 
 
 # ─────────────────────────────────────────────────────────────

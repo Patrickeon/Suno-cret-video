@@ -14,9 +14,9 @@ export function SettingsModal({
   onSave: (patch: Record<string, string | boolean>) => Promise<void>;
 }) {
   const [llmProvider, setLlmProvider] = useState(settings?.llm_provider ?? "claude");
-  const [llmModel, setLlmModel] = useState(settings?.llm_model ?? "claude-sonnet-4-6");
+  const [llmModel, setLlmModel] = useState(settings?.llm_model ?? "claude-sonnet-5");
   const [custom, setCustom] = useState(
-    !MODELS.some((m) => m.id === (settings?.llm_model ?? "claude-sonnet-4-6"))
+    !MODELS.some((m) => m.id === (settings?.llm_model ?? "claude-sonnet-5"))
   );
   const [llmKey, setLlmKey] = useState("");
   const [videoProvider, setVideoProvider] = useState(settings?.video_provider ?? "replicate");
@@ -60,8 +60,16 @@ export function SettingsModal({
           <Field label="Provider">
             <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} className={inputCls}>
               <option value="claude">Claude (Anthropic)</option>
+              <option value="claude-cli">Claude CLI (실험적 — API 키 불필요, 로그인된 claude CLI 세션 사용)</option>
             </select>
           </Field>
+          {llmProvider === "claude-cli" && (
+            <p className="text-[11px] text-amber-300">
+              ⚠️ 실험적 기능: 로컬에 로그인된 Claude Code CLI 세션을 사용해 API 키가 필요 없지만,
+              실제 테스트에서 가사 편집·스토리보드 등 짧은 데이터 입력에 대해 응답이 불안정한
+              경우가 확인됐습니다. 안정적으로 쓰려면 API 키 방식(Claude (Anthropic))을 권장합니다.
+            </p>
+          )}
           <Field label="모델">
             {custom ? (
               <input

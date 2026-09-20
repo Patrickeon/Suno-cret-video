@@ -17,8 +17,11 @@ _PATH = os.path.join(_DIR, "settings.json")
 _LOCK = threading.Lock()
 
 DEFAULTS = {
+    # "claude-cli" 는 실제 통합 테스트에서 신뢰도 문제가 확인돼 기본값에서 제외했다
+    # (agent.py ClaudeCLIProvider 주석 참고). API 키 없이 시험해보고 싶은 사용자를
+    # 위해 provider 선택지로는 남겨둔다.
     "llm_provider": "claude",
-    "llm_model": "claude-sonnet-4-6",
+    "llm_model": "claude-sonnet-5",
     "llm_api_key": "",
     "video_provider": "replicate",
     "video_api_key": "",

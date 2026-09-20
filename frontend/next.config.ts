@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   },
   // 도커/Cloud Run 배포용 독립 실행 번들 (node server.js)
   output: "standalone",
+
+  allowedDevOrigins: ['192.168.219.101', 'localhost', '127.0.0.1'],
 };
 
 export default nextConfig;

@@ -21,6 +21,8 @@ import {
   SUGGESTIONS,
   Toast,
   VIZ_PALETTES,
+  VisualMode,
+  VISUAL_MODES,
 } from "./lib/studio";
 
 let toastSeq = 0;
@@ -48,8 +50,13 @@ export default function Home() {
   const [bgGrad, setBgGrad] = useState("");     // ""=bg_color 에서 자동 유도
   const [disc, setDisc] = useState(false);       // 레코드(회전 앨범아트) 모드
   const [discBgStyle, setDiscBgStyle] = useState("off"); // 레코드 배경: off/glow/radial
+  const [discTheme, setDiscTheme] = useState("classic"); // 레코드 테마: classic/lp_vinyl/text_ring
+  const [discRingText, setDiscRingText] = useState(""); // text_ring 테마 전용 커스텀 문구
+  const [discArtFile, setDiscArtFile] = useState<File | null>(null); // 레코드 커버 전용 이미지(선택)
   const [progressBar, setProgressBar] = useState(false);
+  const [progressBarPos, setProgressBarPos] = useState("bottom"); // 진행바 위치: bottom/top
   const [subPreview, setSubPreview] = useState(true); // 다음 소절 미리보기
+  const [visualMode, setVisualMode] = useState<VisualMode>("playlist"); // 비주얼 모드 (플레이리스트/하이브리드/뮤직비디오)
   const [paletteBusy, setPaletteBusy] = useState(false);
   const [shorts, setShorts] = useState(false);
   const [clipStart, setClipStart] = useState("");
@@ -58,6 +65,7 @@ export default function Home() {
   const [bgColor, setBgColor] = useState("0x0a0a14");
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
+  const [titleCaption, setTitleCaption] = useState(false); // 제목·아티스트 상시 표시 캡션
   const [watermark, setWatermark] = useState("");
   const [align, setAlign] = useState(false);
 
@@ -106,6 +114,8 @@ export default function Home() {
   // AI 배경 영상 / 스토리보드
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiVideoBusy, setAiVideoBusy] = useState(false);
+  const [albumCoverPrompt, setAlbumCoverPrompt] = useState("");
+  const [albumCoverBusy, setAlbumCoverBusy] = useState(false);
   const [storyboardBusy, setStoryboardBusy] = useState(false);
   const [storyboardScenes, setStoryboardScenes] = useState(4);
 
@@ -257,6 +267,25 @@ export default function Home() {
     toast(`'${name}' 프리셋 적용`, "info");
   }
 
+  function applyVisualMode(mode: VisualMode) {
+    const preset = VISUAL_MODES.find((m) => m.id === mode);
+    if (!preset) return;
+    setVisualMode(mode);
+    setDisc(preset.apply.disc);
+    setDiscBgStyle(preset.apply.discBgStyle);
+    setProgressBar(preset.apply.progressBar);
+    setSubPreview(preset.apply.subPreview);
+    setKenburns(preset.apply.kenburns);
+    setVignette(preset.apply.vignette);
+    setFilmGrain(preset.apply.filmGrain);
+    setBgPulse(preset.apply.bgPulse);
+    setSparkle(preset.apply.sparkle);
+    setIntroCard(preset.apply.introCard);
+    setInterludeNote(preset.apply.interludeNote);
+    setStoryboardScenes(preset.storyboardScenes);
+    toast(`${preset.emoji} ${preset.label} 모드 적용`, "info");
+  }
+
   function deletePreset(name: string) {
     const rest = { ...presets };
     delete rest[name];
@@ -308,8 +337,13 @@ export default function Home() {
       if (bgGrad) fd.append("bg_grad", bgGrad);
       fd.append("disc", String(disc));
       if (discBgStyle !== "off") fd.append("disc_bg_style", discBgStyle);
+      if (discTheme !== "classic") fd.append("disc_theme", discTheme);
+      if (discRingText.trim()) fd.append("disc_ring_text", discRingText.trim());
+      if (discArtFile) fd.append("disc_art", discArtFile);
       fd.append("progress_bar", String(progressBar));
+      if (progressBarPos !== "bottom") fd.append("progress_bar_pos", progressBarPos);
       fd.append("sub_preview", String(subPreview));
+      fd.append("visual_mode", visualMode);
       fd.append("shorts", String(shorts));
       fd.append("clip_start", clipStart);
       fd.append("clip_len", String(clipLen));
@@ -317,6 +351,7 @@ export default function Home() {
       fd.append("bg_color", bgColor);
       fd.append("title", title);
       fd.append("artist", artist);
+      fd.append("title_caption", String(titleCaption));
       fd.append("watermark", watermark);
       fd.append("align", align ? "auto" : "none");
       fd.append("res", res);
@@ -371,8 +406,13 @@ export default function Home() {
       if (bgGrad) fd.append("bg_grad", bgGrad);
       fd.append("disc", String(disc));
       if (discBgStyle !== "off") fd.append("disc_bg_style", discBgStyle);
+      if (discTheme !== "classic") fd.append("disc_theme", discTheme);
+      if (discRingText.trim()) fd.append("disc_ring_text", discRingText.trim());
+      if (discArtFile) fd.append("disc_art", discArtFile);
       fd.append("progress_bar", String(progressBar));
+      if (progressBarPos !== "bottom") fd.append("progress_bar_pos", progressBarPos);
       fd.append("sub_preview", String(subPreview));
+      fd.append("visual_mode", visualMode);
       fd.append("res", res);
       fd.append("fps", String(fps));
       fd.append("kenburns", String(kenburns));
@@ -387,6 +427,7 @@ export default function Home() {
       if (outroCtaText.trim()) fd.append("outro_cta_text", outroCtaText);
       fd.append("watermark", watermark);
       fd.append("title", f.name.replace(/\.[^.]+$/, ""));
+      fd.append("title_caption", String(titleCaption));
       try {
         await apiFetch(`${API}/api/render`, { method: "POST", body: fd });
       } catch {
@@ -507,6 +548,30 @@ export default function Home() {
       toast(e instanceof Error ? e.message : "AI 영상 요청 실패", "error");
     } finally {
       setAiVideoBusy(false);
+    }
+  }
+
+  async function generateAlbumCover() {
+    if (!job || job.status !== "done") {
+      toast("먼저 '로컬 생성'으로 기본 영상을 만든 뒤 AI 앨범 커버를 생성하세요.", "error");
+      return;
+    }
+    setAlbumCoverBusy(true);
+    try {
+      const r = await apiFetch(`${API}/api/album-cover`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: job.id, prompt: albumCoverPrompt.trim() || undefined }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || `오류 (${r.status})`);
+      setJob({ id: data.job_id, status: "queued", progress: 0, error: null, log: "", video: false, thumb: false });
+      poll(data.job_id);
+      toast("🎨 AI 앨범 커버 생성 + 재렌더를 시작했어요. 수십 초~수 분 걸릴 수 있어요.", "info");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "AI 앨범 커버 요청 실패", "error");
+    } finally {
+      setAlbumCoverBusy(false);
     }
   }
 
@@ -862,6 +927,30 @@ export default function Home() {
 
               <Card title="2. 배경 / 비주얼" step="②">
                 <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-[var(--text-dim)]">비주얼 모드</span>
+                  <div className="flex flex-wrap gap-2">
+                    {VISUAL_MODES.map((m) => {
+                      const active = visualMode === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => applyVisualMode(m.id)}
+                          className={`rounded-full border px-3 py-1 text-xs transition ${
+                            active
+                              ? "border-indigo-400 bg-indigo-500/20 text-white"
+                              : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-dim)] hover:bg-[var(--surface-3)]"
+                          }`}
+                        >
+                          {m.emoji} {m.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-[var(--text-dim)]">
+                    {VISUAL_MODES.find((m) => m.id === visualMode)?.description}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
                   <span className="text-xs font-medium text-[var(--text-dim)]">빠른 프리셋</span>
                   <div className="flex flex-wrap gap-2">
                     {PRESETS.map((p) => {
@@ -965,6 +1054,16 @@ export default function Home() {
                 <Toggle checked={kenburns} onChange={setKenburns} label="배경 켄 번스(줌·팬) 효과" />
                 <Toggle checked={disc} onChange={setDisc} label="💿 레코드 모드 (첫 배경 이미지가 원형으로 회전)" />
                 {disc && (
+                  <Dropzone
+                    label="앨범 커버 이미지 (선택 — 비우면 첫 배경 이미지 사용)"
+                    hint="jpg · png · webp"
+                    accept="image/*"
+                    icon="💿"
+                    files={discArtFile ? [discArtFile] : []}
+                    onFiles={(fs) => setDiscArtFile(fs[0] ?? null)}
+                  />
+                )}
+                {disc && (
                   <Field label="레코드 배경 스타일">
                     <select value={discBgStyle} onChange={(e) => setDiscBgStyle(e.target.value)} className={inputCls}>
                       <option value="off">기본 (배경 그대로)</option>
@@ -973,7 +1072,36 @@ export default function Home() {
                     </select>
                   </Field>
                 )}
+                {disc && (
+                  <Field label="레코드 테마">
+                    <select value={discTheme} onChange={(e) => setDiscTheme(e.target.value)} className={inputCls}>
+                      <option value="classic">🎨 클래식 (앨범아트가 원형으로 회전)</option>
+                      <option value="lp_vinyl">🎵 LP 바이닐 (커버 뒤로 비닐이 살짝 도는 느낌)</option>
+                      <option value="text_ring">🔤 텍스트 링 (커버 둘레를 도는 문구)</option>
+                      <option value="square_spin">🔲 스퀘어 스핀 (사각 커버가 그대로 회전)</option>
+                    </select>
+                  </Field>
+                )}
+                {disc && discTheme === "text_ring" && (
+                  <Field label="링 텍스트 (선택)">
+                    <input
+                      type="text"
+                      value={discRingText}
+                      onChange={(e) => setDiscRingText(e.target.value)}
+                      className={inputCls}
+                      placeholder="비워두면 제목·아티스트로 자동 생성"
+                    />
+                  </Field>
+                )}
                 <Toggle checked={progressBar} onChange={setProgressBar} label="⏳ 곡 진행바 (하단 얇은 라인)" />
+                {progressBar && (
+                  <Field label="진행바 위치">
+                    <select value={progressBarPos} onChange={(e) => setProgressBarPos(e.target.value)} className={inputCls}>
+                      <option value="bottom">하단</option>
+                      <option value="top">상단</option>
+                    </select>
+                  </Field>
+                )}
               </Card>
 
               <Card title="3. 포맷 / 메타" step="③">
@@ -994,6 +1122,7 @@ export default function Home() {
                     <input value={artist} onChange={(e) => setArtist(e.target.value)} className={inputCls} />
                   </Field>
                 </div>
+                <Toggle checked={titleCaption} onChange={setTitleCaption} label="🏷️ 제목·아티스트 상시 표시 (화면에 계속 나옴, 인트로 카드와 별개)" />
                 <Field label="워터마크 (우하단)">
                   <input value={watermark} onChange={(e) => setWatermark(e.target.value)} placeholder="@내채널" className={inputCls} />
                 </Field>
@@ -1186,6 +1315,34 @@ export default function Home() {
                     className="shrink-0 rounded-lg bg-fuchsia-500 px-4 py-2 text-sm font-medium text-white hover:bg-fuchsia-400 disabled:opacity-50"
                   >
                     {aiVideoBusy ? "생성 중…" : "생성"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
+                <h3 className="flex items-center gap-2 text-sm font-medium">
+                  🎨 AI 앨범 커버
+                  {settings && !settings.video_key_set && (
+                    <span className="text-[11px] text-amber-300">(⚙️ 영상 키 필요 — AI 배경 영상과 같은 키 재사용)</span>
+                  )}
+                </h3>
+                <p className="text-[11px] text-[var(--text-dim)]">
+                  프롬프트를 비워두면 가사·제목 분위기를 분석해 자동으로 만듭니다. 생성된 이미지는 레코드 모드
+                  커버로 적용되고 재렌더됩니다.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    value={albumCoverPrompt}
+                    onChange={(e) => setAlbumCoverPrompt(e.target.value)}
+                    placeholder="비워두면 자동 생성 (예: 파스텔톤 신스웨이브 앨범 커버)"
+                    className={inputCls}
+                  />
+                  <button
+                    onClick={generateAlbumCover}
+                    disabled={albumCoverBusy}
+                    className="shrink-0 rounded-lg bg-fuchsia-500 px-4 py-2 text-sm font-medium text-white hover:bg-fuchsia-400 disabled:opacity-50"
+                  >
+                    {albumCoverBusy ? "생성 중…" : "생성"}
                   </button>
                 </div>
               </div>

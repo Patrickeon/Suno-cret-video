@@ -20,7 +20,8 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
     if opts.get("video_bg"):
         cmd += ["--video-bg", opts["video_bg"]]
         # 영상 배경일 땐 --bg 가 빠지므로, 레코드 모드 앨범아트를 명시적으로 전달
-        if opts.get("disc") and bg_list:
+        # (명시적 disc_art 업로드가 있으면 아래에서 처리하므로 bg_list 폴백은 건너뜀)
+        if opts.get("disc") and not opts.get("disc_art") and bg_list:
             cmd += ["--disc-art", bg_list[0]]
     elif bg_list:
         cmd += ["--bg"] + bg_list
@@ -43,10 +44,21 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
             cmd += ["--bg-grad"] + [str(c) for c in bg_grad]
     if opts.get("disc"):
         cmd += ["--disc"]
+    if opts.get("disc_art"):
+        # 배경이 이미지 리스트든 video_bg 든 상관없이 독립적으로 덮어씀
+        cmd += ["--disc-art", str(opts["disc_art"])]
     if opts.get("disc_bg_style") and opts["disc_bg_style"] != "off":
         cmd += ["--disc-bg-style", str(opts["disc_bg_style"])]
+    if opts.get("disc_theme") and opts["disc_theme"] != "classic":
+        cmd += ["--disc-theme", str(opts["disc_theme"])]
+    if opts.get("disc_ring_text"):
+        cmd += ["--disc-ring-text", str(opts["disc_ring_text"])]
     if opts.get("progress_bar"):
         cmd += ["--progress-bar"]
+    if opts.get("progress_bar_pos") and opts["progress_bar_pos"] != "bottom":
+        cmd += ["--progress-bar-pos", str(opts["progress_bar_pos"])]
+    if opts.get("title_caption"):
+        cmd += ["--title-caption"]
     if opts.get("sub_preview"):
         cmd += ["--sub-preview"]
 

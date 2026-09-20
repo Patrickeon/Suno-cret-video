@@ -47,6 +47,16 @@ export function mediaUrl(path: string): string {
   return `${API}${path}${sep}token=${encodeURIComponent(t)}`;
 }
 
+const SECTION_TAG_RE = /^(?:\s*\[[^[\]]*\])+\s*$/;
+
+/** 줄 전체가 대괄호 태그([Verse 1], [Chorus] 등)로만 이루어졌는지 — SUNO 프롬프트의
+ *  섹션 헤더는 절대 불리지 않으므로 항상 비가사로 취급한다. 괄호 지시문((Chanting,
+ *  bouncy) 등)은 실제로 불릴 수도 있어 여기서는 걸러내지 않는다 — 백엔드 make_mv.py 의
+ *  align_with_stable_ts 경로와 동일한 판단 기준(실제 오디오로 판단 가능한 경우 보존). */
+export function isSectionTagLine(line: string): boolean {
+  return SECTION_TAG_RE.test(line.trim());
+}
+
 export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
 export interface Job {
@@ -108,6 +118,68 @@ export const VIZ_PALETTES = [
   { id: "FFFFFF,E5E7EB", label: "모노", c: ["FFFFFF", "E5E7EB"] },
 ];
 
+export type VisualMode = "playlist" | "hybrid" | "music_video";
+
+export interface VisualModePreset {
+  id: VisualMode;
+  label: string;
+  emoji: string;
+  description: string;
+  apply: {
+    disc: boolean;
+    discBgStyle: string;
+    progressBar: boolean;
+    subPreview: boolean;
+    kenburns: boolean;
+    vignette: boolean;
+    filmGrain: boolean;
+    bgPulse: boolean;
+    sparkle: boolean;
+    introCard: boolean;
+    interludeNote: boolean;
+  };
+  storyboardScenes: number;
+}
+
+export const VISUAL_MODES: VisualModePreset[] = [
+  {
+    id: "playlist",
+    label: "플레이리스트",
+    emoji: "🎧",
+    description: "장시간 재생에 어울리는 안정적이고 잔잔한 화면 (앨범아트·진행바·비주얼라이저 중심)",
+    apply: {
+      disc: true, discBgStyle: "glow", progressBar: true, subPreview: true,
+      kenburns: true, vignette: false, filmGrain: false, bgPulse: false,
+      sparkle: false, introCard: false, interludeNote: false,
+    },
+    storyboardScenes: 4,
+  },
+  {
+    id: "hybrid",
+    label: "하이브리드",
+    emoji: "🎛️",
+    description: "플레이리스트 기반을 유지하면서 핵심 구간에만 시네마틱 장면을 곁들이기 좋은 구성",
+    apply: {
+      disc: true, discBgStyle: "glow", progressBar: true, subPreview: true,
+      kenburns: true, vignette: false, filmGrain: false, bgPulse: false,
+      sparkle: false, introCard: false, interludeNote: false,
+    },
+    storyboardScenes: 3,
+  },
+  {
+    id: "music_video",
+    label: "뮤직비디오",
+    emoji: "🎬",
+    description: "스토리보드/AI 장면 중심의 적극적인 연출 (전면 화면, 시네마틱 질감)",
+    apply: {
+      disc: false, discBgStyle: "off", progressBar: false, subPreview: false,
+      kenburns: true, vignette: true, filmGrain: true, bgPulse: false,
+      sparkle: false, introCard: true, interludeNote: false,
+    },
+    storyboardScenes: 6,
+  },
+];
+
 export const PRESETS = [
   { name: "포근", emoji: "🧸", viz: "waves", vizColor: "", kenburns: true, bg: "0x1a1424" },
   { name: "Lo-fi", emoji: "🌙", viz: "waves", vizColor: "A5B4FC,C4B5FD", kenburns: true, bg: "0x12101a" },
@@ -117,8 +189,8 @@ export const PRESETS = [
 ];
 
 export const MODELS = [
-  { id: "claude-opus-4-8", label: "Claude Opus 4.8 (최고 성능)" },
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (균형·기본)" },
+  { id: "claude-opus-5", label: "Claude Opus 5 (최고 성능)" },
+  { id: "claude-sonnet-5", label: "Claude Sonnet 5 (균형·기본)" },
   { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (빠름·저렴)" },
 ];
 

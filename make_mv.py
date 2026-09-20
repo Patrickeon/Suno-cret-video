@@ -26,6 +26,7 @@ make_mv.py - 음원 + 가사 -> 유튜브 뮤직비디오 자동 생성
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -273,6 +274,32 @@ def parse_lrc(path):
 def read_txt_lines(path):
     with open(path, encoding="utf-8-sig") as f:
         return [ln.strip() for ln in f if ln.strip()]
+
+_SECTION_TAG_RE = re.compile(r"^(?:\s*\[[^\[\]]*\])+\s*$")
+_STAGE_DIRECTION_RE = re.compile(r"^(?:\s*\([^()]*\))+\s*$")
+
+def is_section_tag_line(line):
+    """줄 전체가 대괄호 태그([Verse 1], [Chorus] 등)로만 이루어졌는지. 항상 비가사."""
+    return bool(_SECTION_TAG_RE.match(line.strip()))
+
+def is_stage_direction_line(line):
+    """줄 전체가 괄호 지시문((Chanting, bouncy) 등)으로만 이루어졌는지. 실제로 불릴
+    수도 있어 판단이 애매 — 호출부에서 오디오 인식 여부에 따라 다르게 취급한다."""
+    return bool(_STAGE_DIRECTION_RE.match(line.strip()))
+
+def filter_lyric_lines(lines, drop_stage_directions=True):
+    """SUNO 프롬프트 형식 줄(섹션 태그/연출 지시문)을 싱크 타이밍 계산에서 제외한다.
+    실제 가사 줄에 붙은 인라인 애드립(예: '...밑선 (Hey!)')은 줄 전체가 괄호가
+    아니므로 걸리지 않고 그대로 유지된다. 원본 가사 텍스트/파일 자체는 건드리지 않고
+    타이밍 계산용 줄 목록만 정리한다. 반환: (남은 줄, 제외된 줄)."""
+    kept, dropped = [], []
+    for ln in lines:
+        s = ln.strip()
+        if is_section_tag_line(s) or (drop_stage_directions and is_stage_direction_line(s)):
+            dropped.append(ln)
+        else:
+            kept.append(ln)
+    return kept, dropped
 
 def even_distribute(lines, duration, intro=0.0, outro=0.0):
     span = max(1.0, duration - intro - outro)
@@ -719,6 +746,55 @@ def disc_diameter(lay):
     return d - (d % 2)
 
 
+def progress_bar_geometry(W, H, scale=1.0, pos="bottom"):
+    """곡 진행바 트랙의 좌우 여백/크기/y 좌표 (순수 함수, top/bottom 공용).
+    좌우에 여백을 둬야 둥근 캡이 화면 밖으로 잘리지 않고 보인다.
+    반환: (margin_x, bar_w, bar_h, y)."""
+    margin_x = int(round(70 * scale))
+    bar_w = max(10, W - margin_x * 2)
+    bar_h = max(8, int(round(10 * scale)))
+    if pos == "top":
+        y = int(round(34 * scale))
+    else:
+        y = H - bar_h - int(round(26 * scale))
+    return margin_x, bar_w, bar_h, y
+
+
+def pill_alpha_expr(w, h, opacity, fill_expr=None):
+    """가로 알약(스타디움) 모양 alpha 표현식 (geq 용).
+    make_disc_png/make_vinyl_png 의 hypot 원형 마스킹 패턴을, X 를 [r, w-r] 로
+    클램프해 '직선 구간은 그대로, 양 끝은 반원'인 알약 모양으로 확장한 것.
+
+    fill_expr 를 주면(시간에 따라 자라는 ffmpeg 표현식, 예: 'W*clip(T/dur,0,1)')
+    그 x 좌표까지만 채워 왼쪽에서 자라는 진행바 필(오른쪽 반원 끝이 곧 '손잡이'
+    처럼 보인다)을 만든다. 생략하면 폭 전체를 채운 고정 트랙이 된다."""
+    r = h / 2.0
+    cy = (h - 1) / 2.0
+    amp = int(round(255 * opacity))
+    if fill_expr is None:
+        clamp_x = f"clip(X,{r:.2f},{max(r, w - r):.2f})"
+        dist = f"hypot(X-{clamp_x},Y-{cy:.2f})"
+        return f"{amp}*if(lte({dist},{r:.2f}),1,0)"
+    clamp_x = f"clip(X,{r:.2f},max({r:.2f},{fill_expr}-{r:.2f}))"
+    dist = f"hypot(X-{clamp_x},Y-{cy:.2f})"
+    return f"{amp}*lte(X,{fill_expr})*lte({dist},{r:.2f})"
+
+
+def title_caption_geometry(disc_active, D, cy, H, scale=1.0):
+    """상시 제목/아티스트 캡션의 글자 크기/y 좌표 (순수 함수).
+    디스크 모드면 디스크 바로 아래(인트로 카드와 같은 크기 감각), 디스크가
+    꺼져 있으면 화면 상단(기본 위치인 하단 자막과 겹치지 않도록).
+    반환: (title_fontsize, artist_fontsize, title_y, artist_y_gap)."""
+    ttl_fs = int(round(52 * scale))
+    art_fs = int(round(30 * scale))
+    if disc_active:
+        ttl_y = cy + D // 2 + int(round(26 * scale))
+    else:
+        ttl_y = int(round(40 * scale))
+    art_gap = int(round(ttl_fs * 1.05))
+    return ttl_fs, art_fs, ttl_y, art_gap
+
+
 def make_disc_png(src, out_path, size):
     """앨범아트 -> 원형 마스킹 + 흰 테두리 링 PNG (프리패스, 1프레임).
     본 렌더에선 이 PNG 를 rotate 로 돌리기만 하면 되어 프레임당 비용이 적다."""
@@ -738,6 +814,132 @@ def make_disc_png(src, out_path, size):
            "-vf", vf, "-frames:v", "1", os.path.abspath(out_path)]
     if run(cmd).returncode != 0:
         sys.exit("레코드 모드: 앨범아트 원형 마스킹 실패")
+
+
+def make_square_png(src, out_path, size):
+    """앨범아트 -> 단순 정사각 크롭 PNG (마스킹/테두리 없음, 프리패스 1프레임).
+    lp_vinyl / text_ring 테마의 정적 커버 이미지로 쓴다."""
+    D = size - (size % 2)
+    vf = f"scale={D}:{D}:force_original_aspect_ratio=increase,crop={D}:{D}"
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", os.path.abspath(src),
+           "-vf", vf, "-frames:v", "1", os.path.abspath(out_path)]
+    if run(cmd).returncode != 0:
+        sys.exit("레코드 모드(lp_vinyl/text_ring): 앨범아트 정사각 크롭 실패")
+
+
+def make_vinyl_png(out_path, size, accent_hex):
+    """검은 바이닐(LP) 텍스처 PNG (프리패스, 1프레임, 순수 geq — 추가 의존성 없음).
+    동심원 그루브(radius-distance 사인 변조, make_disc_png 의 hypot 링 패턴과
+    radial 헤일로의 a_expr 패턴을 재사용)와 중앙 라벨 원, 스핀들 홀을 그리고
+    바깥 가장자리는 make_disc_png 와 동일한 소프트 알파 낙차로 마감한다."""
+    D = size - (size % 2)
+    c = (D - 1) / 2
+    R = D / 2 - 2                      # 소프트 엣지 여유 (make_disc_png 와 동일 패턴)
+    label_r = D * 0.22                 # 중앙 라벨(스티커) 반지름
+    hole_r = max(3.0, D * 0.035)       # 스핀들 홀 반지름
+    accent = norm_hex(accent_hex, DEFAULT_VIZ_COLORS[0])
+    ar, ag, ab = int(accent[0:2], 16), int(accent[2:4], 16), int(accent[4:6], 16)
+    dist = f"hypot(X-{c:.1f},Y-{c:.1f})"
+    # 동심원 그루브: 반지름 거리에 따라 명암이 주기적으로 흔들리는 회색조 링들
+    groove = f"(22+14*sin({dist}*1.05))"
+    in_hole = f"lt({dist},{hole_r:.1f})"
+    in_label = f"lt({dist},{label_r:.1f})"
+    r_expr = f"if({in_hole},6,if({in_label},{ar},{groove}))"
+    g_expr = f"if({in_hole},6,if({in_label},{ag},{groove}))"
+    b_expr = f"if({in_hole},6,if({in_label},{ab},{groove}))"
+    a_expr = f"255*clip(({R:.1f}-{dist})/2+1,0,1)"
+    vf = (
+        f"format=gbrap,"
+        f"geq=r='{r_expr}':g='{g_expr}':b='{b_expr}':a='{a_expr}'"
+    )
+    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+           "-i", f"color=c=black:s={D}x{D}:r=1",
+           "-vf", vf, "-frames:v", "1", os.path.abspath(out_path)]
+    if run(cmd).returncode != 0:
+        sys.exit("레코드 모드(lp_vinyl): 비닐 텍스처 생성 실패")
+
+
+_DEFAULT_RING_PHRASE = "MUSIC EVERYWHERE - "
+
+# 구분자로 흔히 쓰는 '•'(U+2022)/'·'(U+00B7)는 동봉 폰트 중 하나(Jua-Regular)에
+# 글리프가 없어 각지고 빈 사각형(tofu)으로 깨진다 — 두 동봉 폰트 모두 갖고 있는
+# ASCII 하이픈으로 대체해 어떤 폰트를 골라도 항상 정상 렌더된다.
+_RING_SEP = " - "
+
+
+def default_ring_text(title, artist):
+    """text_ring 테마의 기본 텍스트: 제목/아티스트가 있으면 그걸로, 없으면
+    일반 반복 문구로 폴백. make_ring_text_png 는 이 결과를 원 둘레만큼 반복한다."""
+    title = (title or "").strip()
+    artist = (artist or "").strip()
+    if title and artist:
+        return f"{title}{_RING_SEP}{artist}{_RING_SEP}"
+    if title:
+        return f"{title}{_RING_SEP}"
+    if artist:
+        return f"{artist}{_RING_SEP}"
+    return _DEFAULT_RING_PHRASE
+
+
+def make_ring_text_png(out_path, size, text, font_path):
+    """커버 주위를 도는 곡선 텍스트 PNG (프리패스, text_ring 테마 전용).
+    글자 단위 회전 배치가 필요해 순수 ffmpeg 로는 만들기 어려우므로, stable-ts 와
+    같은 방식으로 Pillow 를 지연 임포트(opt-in 의존성)해서 렌더한다."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        sys.exit(
+            "레코드 모드(text_ring 테마)에는 Pillow 가 필요합니다: "
+            "pip install Pillow (텍스트 링 테마 전용, 기본 기능엔 불필요)"
+        )
+
+    D = size - (size % 2)
+    img = Image.new("RGBA", (D, D), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    font_size = max(12, int(D * 0.045))
+    try:
+        font = ImageFont.truetype(font_path, font_size) if font_path and \
+            os.path.exists(font_path) else ImageFont.load_default()
+    except OSError:
+        font = ImageFont.load_default()
+
+    radius = max(1.0, D / 2 - font_size * 0.9)
+    circumference = 2 * math.pi * radius
+
+    base = (text or "").strip() or _DEFAULT_RING_PHRASE
+    if not base.endswith(" "):
+        base += " "
+    rendered = base
+    # 둘레를 다 채울 때까지 문구 반복
+    while draw.textlength(rendered, font=font) < circumference:
+        rendered += base
+    # 이음매에서 겹치지 않도록 둘레를 넘는 만큼 뒤에서 잘라낸다
+    while len(rendered) > 1 and draw.textlength(rendered, font=font) > circumference:
+        rendered = rendered[:-1]
+
+    cx = cy = D / 2
+    angle_deg = -90.0  # 12시 방향에서 시작해 시계방향으로
+    pad = font_size * 1.5
+    cell = int(pad * 2)
+    for ch in rendered:
+        ch_w = draw.textlength(ch, font=font)
+        half_step_deg = (ch_w / radius) * (180.0 / math.pi) / 2.0
+        theta = angle_deg + half_step_deg
+        rad = math.radians(theta)
+        x = cx + radius * math.cos(rad)
+        y = cy + radius * math.sin(rad)
+
+        glyph = Image.new("RGBA", (cell, cell), (0, 0, 0, 0))
+        gdraw = ImageDraw.Draw(glyph)
+        gdraw.text((pad, pad), ch, font=font, fill=(255, 255, 255, 255), anchor="mm")
+        # 글자가 원 접선 방향(바깥을 향해 똑바로 서도록) 회전
+        rotated = glyph.rotate(-(theta + 90.0), resample=Image.BICUBIC, expand=False)
+        img.alpha_composite(rotated, (int(x - pad), int(y - pad)))
+
+        angle_deg += half_step_deg * 2.0
+
+    img.save(out_path)
 
 # ---------- 반짝이는 음표 파티클 (배경 장식) ----------
 
@@ -783,16 +985,23 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            intro_card=False, ic_title="", ic_artist="", gaps=None,
            viz_colors=None, bg_style="gradient", bg_grad=None,
            scrim=False, disc_png=None, progress_bar=False,
+           progress_bar_pos="bottom",
            sparkle=False, outro_cta=False, outro_cta_text="",
-           disc_bg_style="off"):
+           disc_bg_style="off", disc_theme="classic", disc_ring_text=None,
+           cover_png=None, vinyl_png=None, ring_png=None,
+           title_caption=False, cap_title="", cap_artist=""):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
 
+    # 레코드 모드 활성 여부: classic 은 disc_png, lp_vinyl/text_ring 은 cover_png 로 판단
+    # (둘 다 build_bg 의 disc_bg_style(glow) 게이트와 radial 헤일로 게이트에 공통으로 쓰인다)
+    disc_active = bool(disc_png) or bool(cover_png)
+
     extra_inputs, bg_parts, bg_label, audio_idx = build_bg(
         bg_list, lay, duration, kenburns, bg_color, video_bg=video_bg,
         bg_style=bg_style, bg_grad=bg_grad,
-        disc_bg_style=(disc_bg_style if disc_png else "off"))
+        disc_bg_style=(disc_bg_style if disc_active else "off"))
     audio_spec = f"{audio_idx}:a"
 
     parts = list(bg_parts)
@@ -870,9 +1079,11 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         spk_parts, cur = build_sparkle(cur, W, H)
         parts += spk_parts
 
-    # ---- 레코드 모드: 원형 앨범아트가 천천히 회전 (+선택: 배경 헤일로) ----
+    # ---- 레코드 모드: 앨범아트가 천천히 회전 (classic/lp_vinyl/text_ring, +선택: 배경 헤일로) ----
+    # disc_ring_text 는 text_ring 프리패스(make_ring_text_png)가 이미 ring_png 에
+    # 구워 넣으므로 여기선 쓰이지 않는다 — 호출부(main)와 시그니처를 맞추기 위해 받는다.
     disc_idx = None
-    if disc_png:
+    if disc_active:
         D = disc_diameter(lay)
         cy = int(H * 0.30) if H > W else int(H * 0.36)  # 세로형은 조금 위
 
@@ -913,14 +1124,66 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
                 f"{cur}{halo_label}overlay=(W-{HD})/2:{cy - HD // 2}[vhalo]")
             cur = "[vhalo]"
 
-        disc_idx = audio_idx + 1 + (1 if logo else 0)
-        rotate_expr = f"rotate=2*PI*t/16:ow={D}:oh={D}:c=black@0"
-        if rotate_eval_flag():
-            rotate_expr += ":eval=frame"
-        parts.append(
-            f"[{disc_idx}:v]format=rgba,{rotate_expr},fps={FPS}[disc]")
-        parts.append(f"{cur}[disc]overlay={(W - D) // 2}:{cy - D // 2}[vdisc]")
-        cur = "[vdisc]"
+        if disc_theme in ("classic", "square_spin"):
+            # ---- classic/square_spin: 앨범아트가 그대로(원형 마스킹 또는 정사각)
+            #      회전. square_spin 은 회전한 정사각형의 대각선까지 담아야 모서리가
+            #      잘리지 않으므로 회전 캔버스를 D*sqrt(2) 로 키운다(안 그러면 45도
+            #      회전 시 모서리가 D×D 캔버스에 잘려 팔각형처럼 보임). classic 은
+            #      원형이라 회전에 불변 — 캔버스가 그대로 D 여야 기존 동작과 100%
+            #      동일하다(하위 호환 필수) ----
+            disc_idx = audio_idx + 1 + (1 if logo else 0)
+            if disc_theme == "square_spin":
+                RD = int(math.ceil(D * math.sqrt(2)))
+                RD += RD % 2  # 짝수로 (yuv420p/overlay 위치 계산 안전)
+            else:
+                RD = D
+            rotate_expr = f"rotate=2*PI*t/16:ow={RD}:oh={RD}:c=black@0"
+            if rotate_eval_flag():
+                rotate_expr += ":eval=frame"
+            parts.append(
+                f"[{disc_idx}:v]format=rgba,{rotate_expr},fps={FPS}[disc]")
+            parts.append(f"{cur}[disc]overlay={(W - RD) // 2}:{cy - RD // 2}[vdisc]")
+            cur = "[vdisc]"
+        elif disc_theme == "lp_vinyl" and vinyl_png and cover_png:
+            # ---- lp_vinyl: 회전하는 비닐(1.3x, 한쪽으로 살짝 오프셋) 뒤에
+            #      정적 정사각 커버를 classic 과 동일한 앵커에 겹친다 ----
+            base_idx = audio_idx + 1 + (1 if logo else 0)   # vinyl_png 입력
+            cover_idx = base_idx + 1                        # cover_png 입력
+            VD = int(D * 1.3)
+            VD -= VD % 2
+            off_x = int(D * 0.13)  # 커버 뒤에서 오른쪽으로 살짝 비져나오게
+            rotate_expr = f"rotate=2*PI*t/16:ow={VD}:oh={VD}:c=black@0"
+            if rotate_eval_flag():
+                rotate_expr += ":eval=frame"
+            parts.append(
+                f"[{base_idx}:v]format=rgba,{rotate_expr},fps={FPS}[vinylrot]")
+            cover_cx = (W - D) // 2 + D // 2  # 커버(=classic 디스크)의 중심 x
+            vx = cover_cx + off_x - VD // 2
+            vy = cy - VD // 2
+            parts.append(f"{cur}[vinylrot]overlay={vx}:{vy}[vvinyl]")
+            cur = "[vvinyl]"
+            parts.append(f"[{cover_idx}:v]format=rgba[coverfg]")
+            parts.append(f"{cur}[coverfg]overlay={(W - D) // 2}:{cy - D // 2}[vdisc]")
+            cur = "[vdisc]"
+        elif disc_theme == "text_ring" and ring_png and cover_png:
+            # ---- text_ring: 회전하는 텍스트 링(1.4x, 커버와 동심원) + 정적 커버 ----
+            base_idx = audio_idx + 1 + (1 if logo else 0)   # ring_png 입력
+            cover_idx = base_idx + 1                        # cover_png 입력
+            RD = int(D * 1.4)
+            RD -= RD % 2
+            rotate_expr = f"rotate=2*PI*t/16:ow={RD}:oh={RD}:c=black@0"
+            if rotate_eval_flag():
+                rotate_expr += ":eval=frame"
+            parts.append(
+                f"[{base_idx}:v]format=rgba,{rotate_expr},fps={FPS}[ringrot]")
+            cover_cx = (W - D) // 2 + D // 2
+            rx = cover_cx - RD // 2
+            ry = cy - RD // 2
+            parts.append(f"{cur}[ringrot]overlay={rx}:{ry}[vring]")
+            cur = "[vring]"
+            parts.append(f"[{cover_idx}:v]format=rgba[coverfg]")
+            parts.append(f"{cur}[coverfg]overlay={(W - D) // 2}:{cy - D // 2}[vdisc]")
+            cur = "[vdisc]"
 
     # 자막 burn-in (동봉 fonts/ 를 fontsdir 로 등록)
     parts.append(f"{cur}{subtitles_filter(ass_name)}[vsub]")
@@ -962,6 +1225,30 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
                 f"{a_expr}:shadowcolor=black@0.7:shadowx=2:shadowy=2[vica]")
             cur = "[vica]"
 
+    # ---- 상시 노출 제목/아티스트 캡션 (--title-caption, 전체 재생시간 고정) ----
+    # --title/--artist 는 썸네일 등 다른 용도로도 쓰이므로, 이 오버레이는 명시적
+    # opt-in(--title-caption)일 때만 그린다 — 자동으로 켜지지 않는다.
+    if title_caption and (cap_title or cap_artist):
+        ttl_fs, art_fs, ttl_y, art_gap = title_caption_geometry(
+            disc_active, D if disc_active else 0, cy if disc_active else 0,
+            H, scale)
+        cap_y = ttl_y
+        if cap_title:
+            write_textfile(cap_title, os.path.join(work_dir, "_cap_ttl.txt"))
+            parts.append(
+                f"{cur}drawtext={draw_font_spec()}:textfile=_cap_ttl.txt:"
+                f"fontcolor=white:fontsize={ttl_fs}:x=(w-tw)/2:y={cap_y}:"
+                "shadowcolor=black@0.7:shadowx=2:shadowy=2[vcapt]")
+            cur = "[vcapt]"
+            cap_y = ttl_y + art_gap
+        if cap_artist:
+            write_textfile(cap_artist, os.path.join(work_dir, "_cap_art.txt"))
+            parts.append(
+                f"{cur}drawtext={draw_font_spec()}:textfile=_cap_art.txt:"
+                f"fontcolor=white@0.85:fontsize={art_fs}:x=(w-tw)/2:y={cap_y}:"
+                "shadowcolor=black@0.6:shadowx=2:shadowy=2[vcapa]")
+            cur = "[vcapa]"
+
     # ---- 간주(가사 없는 긴 구간)에 ♪ 표시 ----
     if gaps:
         enable = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in gaps)
@@ -971,13 +1258,29 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
             f"enable='{enable}'[vnote]")
         cur = "[vnote]"
 
-    # ---- 곡 진행바: 하단 얇은 라인 (파형 색과 통일) ----
+    # ---- 곡 진행바: 둥근 알약 트랙 + 진행 필 (파형 색과 통일, 상/하단 선택) ----
+    # 트랙(고정, 은은한 흰색 알약)을 먼저 깔고, 그 위에 파형 색 필을 T(초 단위
+    # 타임스탬프, geq 내장 변수)로 매 프레임 새로 그려 왼쪽부터 채운다 — 필의
+    # 오른쪽 반원 끝이 항상 '지금 재생 위치'를 가리키는 손잡이처럼 보인다.
+    # (오버레이 x 를 시간에 따라 슬라이드시키는 옛 트릭은 트랙에 여백을 두면
+    #  0% 지점에서 필 몸통 일부가 여백 안쪽으로 새어 보이는 문제가 있어 안 씀.)
     if progress_bar and duration:
-        ph = max(4, int(round(6 * scale)))
+        margin_x, bar_w, bar_h, pb_y = progress_bar_geometry(
+            W, H, scale, progress_bar_pos)
         accent = norm_hex((viz_colors or [None])[0], DEFAULT_VIZ_COLORS[0])
-        parts.append(f"color=c=0x{accent}@0.85:s={W}x{ph}:r={FPS}[pbar]")
+        ar, ag, ab = int(accent[0:2], 16), int(accent[2:4], 16), int(accent[4:6], 16)
+        fill_expr = f"{bar_w}*clip(T/{duration:.3f},0,1)"
+        track_a = pill_alpha_expr(bar_w, bar_h, 0.30)
+        fill_a = pill_alpha_expr(bar_w, bar_h, 0.92, fill_expr=fill_expr)
         parts.append(
-            f"{cur}[pbar]overlay=x='-w+w*t/{duration:.3f}':y={H - ph}[vpb]")
+            f"color=c=white:s={bar_w}x{bar_h}:r={FPS},format=gbrap,"
+            f"geq=r=255:g=255:b=255:a='{track_a}'[pbtrack]")
+        parts.append(f"{cur}[pbtrack]overlay={margin_x}:{pb_y}[vpbt]")
+        cur = "[vpbt]"
+        parts.append(
+            f"color=c=0x{accent}:s={bar_w}x{bar_h}:r={FPS},format=gbrap,"
+            f"geq=r={ar}:g={ag}:b={ab}:a='{fill_a}'[pbfill]")
+        parts.append(f"{cur}[pbfill]overlay={margin_x}:{pb_y}[vpb]")
         cur = "[vpb]"
 
     # ---- 아웃트로 구독 유도 카드: 곡 끝 ~4초에 페이드인 ----
@@ -1015,7 +1318,7 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     full_filter = ";".join(parts)
     final_v = cur
 
-    # 입력 구성: [배경 이미지들...] [오디오] [로고]
+    # 입력 구성: [배경 이미지들...] [오디오] [로고] [레코드 모드: disc_png 또는 (vinyl/ring, cover)]
     # lanczos: 배경 확대/크롭 시 기본(bicubic)보다 또렷한 리샘플링
     cmd = ["ffmpeg", "-y", "-sws_flags", "lanczos+accurate_rnd+full_chroma_int"]
     cmd += extra_inputs
@@ -1026,6 +1329,12 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         cmd += ["-i", os.path.abspath(logo)]
     if disc_png:
         cmd += ["-loop", "1", "-i", os.path.abspath(disc_png)]
+    elif vinyl_png and cover_png:
+        cmd += ["-loop", "1", "-i", os.path.abspath(vinyl_png)]
+        cmd += ["-loop", "1", "-i", os.path.abspath(cover_png)]
+    elif ring_png and cover_png:
+        cmd += ["-loop", "1", "-i", os.path.abspath(ring_png)]
+        cmd += ["-loop", "1", "-i", os.path.abspath(cover_png)]
 
     cmd += [
         "-filter_complex", full_filter,
@@ -1118,8 +1427,21 @@ def main():
     ap.add_argument("--disc-bg-style", choices=["off", "glow", "radial"], default="off",
                     help="레코드 모드 배경: glow=앨범아트 블러+글로우로 배경 전체 대체, "
                          "radial=디스크 뒤 컬러 헤일로가 음악(RMS)에 반응해 반짝임")
+    ap.add_argument("--disc-theme",
+                    choices=["classic", "lp_vinyl", "text_ring", "square_spin"],
+                    default="classic",
+                    help="레코드 모드 테마: classic=원형 앨범아트가 그대로 회전(기본), "
+                         "lp_vinyl=정사각 커버 뒤로 검은 바이닐 LP가 살짝 비치며 회전, "
+                         "text_ring=커버 둘레를 도는 회전 텍스트 링, "
+                         "square_spin=정사각 앨범아트가 마스킹 없이 그대로 회전")
+    ap.add_argument("--disc-ring-text", default=None,
+                    help="text_ring 테마 전용: 원형으로 도는 문구 "
+                         "(기본: 제목/아티스트 또는 자동 문구, --disc-theme text_ring 일 때만 사용)")
     ap.add_argument("--progress-bar", action="store_true",
-                    help="하단 곡 진행바 (파형 색과 통일)")
+                    help="곡 진행바(둥근 알약 트랙 + 진행 필, 파형 색과 통일). "
+                         "위치는 --progress-bar-pos 로 선택 (기본 하단)")
+    ap.add_argument("--progress-bar-pos", choices=["top", "bottom"], default="bottom",
+                    help="진행바 위치: bottom=하단(기본, 기존 동작), top=상단")
     # 가사 싱크
     ap.add_argument("--align", choices=["none", "auto"], default="none",
                     help="auto: stable-ts 로 가사 강제정렬")
@@ -1140,9 +1462,15 @@ def main():
                     help="다음 소절 미리보기 (현재 줄 아래 작고 흐리게)")
     ap.add_argument("--intro-card", action="store_true",
                     help="시작 ~4초 제목/아티스트 페이드인 오프닝")
+    ap.add_argument("--title-caption", action="store_true",
+                    help="곡 제목/아티스트를 전체 재생시간 내내 고정 노출 "
+                         "(--title/--artist 가 있어도 자동으로 켜지지 않음, 명시적 opt-in). "
+                         "레코드 모드면 디스크 바로 아래, 아니면 화면 상단")
     ap.add_argument("--interlude-note", action="store_true",
                     help="가사 없는 긴 구간(간주)에 ♪ 표시")
     ap.add_argument("--keep-ass", action="store_true")
+    ap.add_argument("--keep-meta-lines", action="store_true",
+                    help="SUNO 프롬프트 형식 섹션 태그/연출 지시문 자동 제외를 끄고 모든 줄을 가사로 취급")
     # 쇼츠 / 클립
     ap.add_argument("--shorts", action="store_true", help="세로 9:16 (1080x1920)")
     ap.add_argument("--clip-start", help="클립 시작 (초 또는 mm:ss)")
@@ -1215,6 +1543,10 @@ def main():
         if args.align == "auto":
             lines = read_txt_lines(args.lyrics) if ext != ".lrc" else \
                 [t for _, t in parse_lrc(args.lyrics)]
+            if not args.keep_meta_lines:
+                lines, dropped = filter_lyric_lines(lines, drop_stage_directions=False)
+                if dropped:
+                    print(f"[info] SUNO 프롬프트 형식 줄 {len(dropped)}개 자동 제외 (섹션 태그/연출 지시문)")
             cues = align_with_stable_ts(args.audio, "\n".join(lines), args.align_model,
                                         language=args.align_lang)
             print(f"[info] 강제정렬 {len(cues)}줄")
@@ -1223,6 +1555,10 @@ def main():
             print(f"[info] LRC {len(cues)}줄 (정확한 싱크)")
         else:
             lines = read_txt_lines(args.lyrics)
+            if not args.keep_meta_lines:
+                lines, dropped = filter_lyric_lines(lines, drop_stage_directions=True)
+                if dropped:
+                    print(f"[info] SUNO 프롬프트 형식 줄 {len(dropped)}개 자동 제외 (섹션 태그/연출 지시문)")
             cues = even_distribute(lines, full_dur, args.intro, args.outro)
             print(f"[info] TXT {len(lines)}줄 균등분배 (초안)")
 
@@ -1250,13 +1586,40 @@ def main():
     # 스크림: 명시 지정 없으면 배경 이미지/영상이 있을 때 자동 on
     scrim = args.scrim if args.scrim is not None else bool(args.bg or args.video_bg)
 
-    # 레코드 모드: 앨범아트 원형 마스킹 프리패스
+    # 레코드 모드: 테마별 프리패스 (classic=원형 마스킹, lp_vinyl/text_ring=정사각 커버 +
+    # 각각 비닐/텍스트링 PNG)
     disc_png = None
+    cover_png = None
+    vinyl_png = None
+    ring_png = None
     if args.disc:
         art = args.disc_art or (args.bg[0] if args.bg else None)
         if art and os.path.exists(art):
-            disc_png = os.path.join(out_dir, "_disc.png")
-            make_disc_png(art, disc_png, disc_diameter(lay))
+            D = disc_diameter(lay)
+            if args.disc_theme == "lp_vinyl":
+                cover_png = os.path.join(out_dir, "_cover.png")
+                vinyl_png = os.path.join(out_dir, "_vinyl.png")
+                make_square_png(art, cover_png, D)
+                VD = int(D * 1.3)
+                accent = norm_hex((args.viz_color or [None])[0], DEFAULT_VIZ_COLORS[0])
+                make_vinyl_png(vinyl_png, VD, accent)
+            elif args.disc_theme == "text_ring":
+                cover_png = os.path.join(out_dir, "_cover.png")
+                ring_png = os.path.join(out_dir, "_ring.png")
+                make_square_png(art, cover_png, D)
+                RD = int(D * 1.4)
+                ring_text = args.disc_ring_text or default_ring_text(args.title, args.artist)
+                font_path = bundled_font_file(SUB_FONT) or DRAW_FONTFILE
+                make_ring_text_png(ring_png, RD, ring_text, font_path)
+            elif args.disc_theme == "square_spin":
+                # square_spin: classic 과 구조가 동일(회전할 PNG 1장을 disc_png
+                # 슬롯에 넣고 render() 의 classic 분기를 그대로 재사용) —
+                # 원형 마스킹(make_disc_png) 대신 정사각 크롭만 다르다.
+                disc_png = os.path.join(out_dir, "_disc.png")
+                make_square_png(art, disc_png, D)
+            else:
+                disc_png = os.path.join(out_dir, "_disc.png")
+                make_disc_png(art, disc_png, D)
         else:
             print("[warn] --disc 에 쓸 앨범아트가 없습니다 "
                   "(--disc-art 또는 --bg 필요) — 레코드 모드 생략")
@@ -1290,9 +1653,14 @@ def main():
            ic_artist=args.artist or "", gaps=gaps,
            viz_colors=args.viz_color, bg_style=args.bg_style, bg_grad=args.bg_grad,
            scrim=scrim, disc_png=disc_png, progress_bar=args.progress_bar,
+           progress_bar_pos=args.progress_bar_pos,
            sparkle=args.sparkle, outro_cta=args.outro_cta,
            outro_cta_text=args.outro_cta_text,
-           disc_bg_style=args.disc_bg_style)
+           disc_bg_style=args.disc_bg_style, disc_theme=args.disc_theme,
+           disc_ring_text=args.disc_ring_text,
+           cover_png=cover_png, vinyl_png=vinyl_png, ring_png=ring_png,
+           title_caption=args.title_caption, cap_title=args.title or "",
+           cap_artist=args.artist or "")
 
     # 썸네일 (미리보기에선 생략)
     if args.title and args.preview_secs == 0:
@@ -1305,7 +1673,9 @@ def main():
     if not args.keep_ass:
         for tmp in ("_sub.ass", "_wm.txt", "_ttl.txt", "_art.txt",
                     "_ic_ttl.txt", "_ic_art.txt", "_pulse.cmd", "_disc.png",
-                    "_outro_cta.txt", "_halo_pulse.cmd"):
+                    "_outro_cta.txt", "_halo_pulse.cmd",
+                    "_cover.png", "_vinyl.png", "_ring.png",
+                    "_cap_ttl.txt", "_cap_art.txt"):
             try:
                 os.remove(os.path.join(out_dir, tmp))
             except OSError:

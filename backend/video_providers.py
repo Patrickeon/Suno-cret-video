@@ -227,3 +227,57 @@ def get_video_provider(name, **kwargs):
             f"unknown video provider: {name} (available: {list(_PROVIDERS)})"
         )
     return _PROVIDERS[name](**kwargs)
+
+
+# ─────────────────────────────────────────────────────────────
+# 정적 이미지 생성 (앨범 커버 등) — 영상용 레지스트리와는 별개.
+# ReplicateProvider 는 predictions API 가 모델 종류(영상/이미지)에 무관하게
+# 동일한 형태(output URL)라 이미지 모델로도 그대로 재사용 가능하다.
+# fal.ai(FalProvider)는 영상 전용 응답 파싱(_poll 이 video/videos 키를
+# 하드코딩)이라 이 용도로는 아직 미지원.
+# ─────────────────────────────────────────────────────────────
+
+def _mock_image(prompt, out_path, size=1024):
+    """오프라인 테스트용 — API 키 없이 ffmpeg 로 정적 이미지 생성.
+    MockProvider(영상용)와 동일한 프롬프트 해시 -> 색상 로직을 재사용하되
+    비디오가 아닌 단일 프레임 PNG 로 출력한다."""
+    import hashlib
+    import subprocess
+    h = hashlib.md5((prompt or "cover").encode("utf-8")).digest()
+    c0 = f"0x{h[0] % 96:02X}{h[1] % 96:02X}{h[2] % 128:02X}"
+    c1 = f"0x{h[3] % 128:02X}{h[4] % 96:02X}{h[5] % 96:02X}"
+    src = f"gradients=s={size}x{size}:c0={c0}:c1={c1}:speed=0.05:d=1:r=1"
+    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", src,
+           "-frames:v", "1", os.path.abspath(out_path)]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"mock 앨범 커버 생성 실패: {(proc.stderr or '')[-200:]}")
+    return out_path
+
+
+class _MockImageProvider:
+    """오프라인 테스트용 이미지 provider — MockProvider(영상용)의 이미지판."""
+
+    def __init__(self, **kw):  # noqa: ARG002 (키 불필요)
+        pass
+
+    def generate(self, prompt, out_path, **opts):
+        return _mock_image(prompt, out_path)
+
+
+IMAGE_KEYLESS_PROVIDERS = {"mock"}
+DEFAULT_REPLICATE_IMAGE_MODEL = "black-forest-labs/flux-schnell"
+
+
+def get_image_provider(name="replicate", api_key=None, **kw):
+    """앨범 커버 등 정적 이미지 생성용 provider. 영상용 get_video_provider 와는
+    별개 레지스트리 — ReplicateProvider 는 재사용하되(위 설명 참고), fal 은
+    아직 이미지 용도로 지원하지 않는다."""
+    name = (name or "replicate").lower()
+    if name == "mock":
+        return _MockImageProvider()
+    if name == "replicate":
+        model = kw.pop("model", None) or os.environ.get(
+            "REPLICATE_IMAGE_MODEL", DEFAULT_REPLICATE_IMAGE_MODEL)
+        return ReplicateProvider(api_key=api_key, model=model, **kw)
+    raise ValueError(f"unknown image provider: {name} (available: replicate, mock)")

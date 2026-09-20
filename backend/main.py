@@ -233,6 +233,7 @@ async def create_render(
     lyrics_file: Optional[UploadFile] = File(None),
     bg: List[UploadFile] = File(default=[]),
     logo: Optional[UploadFile] = File(None),
+    disc_art: Optional[UploadFile] = File(None),
     intro_clip: Optional[UploadFile] = File(None),
     outro_clip: Optional[UploadFile] = File(None),
     lyrics_text: str = Form(""),
@@ -242,7 +243,11 @@ async def create_render(
     bg_grad: str = Form(""),
     disc: bool = Form(False),
     disc_bg_style: str = Form("off"),
+    disc_theme: str = Form("classic"),
+    disc_ring_text: str = Form(""),
     progress_bar: bool = Form(False),
+    progress_bar_pos: str = Form("bottom"),
+    title_caption: bool = Form(False),
     sub_preview: bool = Form(False),
     shorts: bool = Form(False),
     clip_start: str = Form(""),
@@ -275,6 +280,7 @@ async def create_render(
     font: str = Form(""),
     auto_retry: bool = Form(True),
     preview: bool = Form(False),
+    visual_mode: str = Form("playlist"),
 ):
     # 입력 검증
     try:
@@ -286,6 +292,8 @@ async def create_render(
                 _check_ext(b.filename, IMAGE_EXTS, "배경 이미지")
         if logo is not None and logo.filename:
             _check_ext(logo.filename, IMAGE_EXTS, "로고")
+        if disc_art is not None and disc_art.filename:
+            _check_ext(disc_art.filename, IMAGE_EXTS, "앨범 커버 이미지")
         for clip, lbl in ((intro_clip, "인트로 클립"), (outro_clip, "아웃트로 클립")):
             if clip is not None and clip.filename:
                 _check_ext(clip.filename, VIDEO_EXTS, lbl)
@@ -299,7 +307,7 @@ async def create_render(
 
     job_title = title.strip() or os.path.splitext(audio.filename or "untitled")[0]
     jid, d = jobs.create_job(title=job_title)
-    jobs.update(jid, shorts=shorts)
+    jobs.update(jid, shorts=shorts, visual_mode=visual_mode)
 
     try:
         audio_path = os.path.join(d, "audio_" + (audio.filename or "input.mp3"))
@@ -326,6 +334,11 @@ async def create_render(
             logo_path = os.path.join(d, "logo_" + logo.filename)
             _save_upload(logo, logo_path, MAX_IMAGE_MB)
 
+        disc_art_path = None
+        if disc_art is not None and disc_art.filename:
+            disc_art_path = os.path.join(d, "discart_" + disc_art.filename)
+            _save_upload(disc_art, disc_art_path, MAX_IMAGE_MB)
+
         intro_path = outro_path = None
         if intro_clip is not None and intro_clip.filename:
             intro_path = os.path.join(d, "intro_" + intro_clip.filename)
@@ -344,7 +357,12 @@ async def create_render(
         "bg_grad": bg_grad,
         "disc": disc,
         "disc_bg_style": disc_bg_style,
+        "disc_theme": disc_theme,
+        "disc_ring_text": disc_ring_text,
+        "disc_art": disc_art_path,
         "progress_bar": progress_bar,
+        "progress_bar_pos": progress_bar_pos,
+        "title_caption": title_caption,
         "sub_preview": sub_preview,
         "shorts": shorts,
         "clip_start": clip_start,
@@ -380,6 +398,7 @@ async def create_render(
         "intro_clip": intro_path,
         "outro_clip": outro_path,
         "preview": preview,
+        "visual_mode": visual_mode,
     }
 
     # 재렌더(AI 편집) 때 같은 자산을 재사용하도록 경로 보관
@@ -579,6 +598,77 @@ def ai_video(body: AiVideoBody):
     jobs.update(njid, assets=assets, shorts=bool(job.get("shorts")))
     _submit(_do_ai_video, njid, njid, nd, assets, job, body.prompt,
             aspect, cfg["video_provider"], key)
+    return {"job_id": njid, "status": "queued"}
+
+
+class AlbumCoverBody(BaseModel):
+    job_id: str
+    prompt: str | None = None  # 비우면 가사/제목 기반 AI 자동 생성
+
+
+def _do_album_cover(njid, nd, assets, base_job, prompt, provider_name, key, llm_cfg):
+    """가사/제목 분위기 -> 앨범 커버 이미지 생성 -> disc_art 로 적용 후 재렌더."""
+    jobs.update(njid, status="running", progress=0, stage="🎨 AI 앨범 커버 생성 중…")
+    opts = {k: v for k, v in (base_job.get("opts") or {}).items() if k != "preview"}
+    title = opts.get("title") or base_job.get("title", "")
+    final_prompt = (prompt or "").strip()
+    if not final_prompt and llm_cfg.get("key"):
+        try:
+            lyrics_text = _read_lyrics(assets.get("lyrics"))
+            final_prompt = agent.generate_album_cover_prompt(
+                title, lyrics_text, provider_name=llm_cfg["provider"],
+                model=llm_cfg["model"], api_key=llm_cfg["key"])
+        except Exception as e:  # noqa: BLE001
+            print(f"[album-cover] 프롬프트 생성 실패, 기본 프롬프트 사용: {e}")
+    if not final_prompt:
+        final_prompt = (f"album cover art, mood board for a song titled '{title}', "
+                        "no text, no typography, no watermark")
+    if _cancelled(njid):
+        return
+    cover_path = os.path.join(nd, "ai_cover.png")
+    try:
+        ip = video_providers.get_image_provider(provider_name, api_key=key)
+        ip.generate(final_prompt, cover_path)
+    except Exception as e:  # noqa: BLE001
+        if not _cancelled(njid):
+            jobs.update(njid, status="error", error=f"앨범 커버 생성 실패: {e}", stage="")
+        return
+    if _cancelled(njid):
+        return
+    # disc_art 만으로는 레코드 모드가 켜지지 않으므로(render.py build_command 참고),
+    # 생성한 커버가 실제로 보이도록 disc 도 함께 켠다.
+    opts = {**opts, "disc": True, "disc_art": cover_path}
+    _do_render(njid, nd, assets["audio"], assets["lyrics"], assets["bg"], opts)
+
+
+@app.post("/api/album-cover")
+def album_cover(body: AlbumCoverBody):
+    """가사/제목 분위기 기반 AI 앨범 커버 생성 -> disc_art 로 적용 후 재렌더."""
+    job = jobs.get(body.job_id)
+    if not job:
+        return JSONResponse({"error": "프로젝트를 찾을 수 없습니다."}, status_code=404)
+    assets = job.get("assets")
+    if not assets:
+        return JSONResponse({"error": "이 프로젝트에는 자산이 없습니다."}, status_code=400)
+
+    cfg = settings.get_raw()
+    # AI 영상 생성과 동일한 Replicate 자격 증명을 재사용한다(설정 화면의
+    # "AI 영상 생성" provider/키가 곧 이 기능의 이미지 provider/키다).
+    # fal 은 이미지 용도로 아직 지원하지 않으므로 replicate 로 대체한다.
+    vp_name = cfg["video_provider"] if cfg["video_provider"] in ("replicate", "mock") else "replicate"
+    vp_key = settings.get_key("video_api_key")
+    if not vp_key and vp_name not in video_providers.IMAGE_KEYLESS_PROVIDERS:
+        return JSONResponse(
+            {"error": "AI 이미지 생성 키가 없습니다. ⚙️ 설정에서 영상 provider API 키를 "
+                      "입력하세요 (Replicate 키 재사용). 키 없이 파이프라인만 보려면 "
+                      "provider 를 mock 으로."},
+            status_code=400,
+        )
+    llm_cfg = {"provider": cfg["llm_provider"], "model": cfg["llm_model"],
+               "key": settings.get_key("llm_api_key")}
+    njid, nd = jobs.create_job(title=f"{job.get('title', '')} (AI 커버)")
+    jobs.update(njid, assets=assets, shorts=bool(job.get("shorts")))
+    _submit(_do_album_cover, njid, njid, nd, assets, job, body.prompt, vp_name, vp_key, llm_cfg)
     return {"job_id": njid, "status": "queued"}
 
 
