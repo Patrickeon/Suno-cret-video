@@ -215,9 +215,9 @@ export const DISC_STYLE_PRESETS: DiscStylePreset[] = [
     id: "sample_lp_vinyl",
     label: "LP 바이닐",
     emoji: "💿",
-    description: "커버 뒤로 비닐이 삐져나오는 구도 + 플랫 핑크 배경 + 화면 상단 제목/아티스트",
+    description: "커버 뒤로 비닐이 삐져나오는 구도 + 블러 배경(글로우) + 화면 상단 제목/아티스트",
     apply: {
-      disc: true, discTheme: "lp_vinyl", discBgStyle: "off", bgColor: "0xF9A8D4",
+      disc: true, discTheme: "lp_vinyl", discBgStyle: "glow",
       titleCaption: true, titleCaptionPos: "top",
       progressBar: false, progressBarPos: "bottom",
     },

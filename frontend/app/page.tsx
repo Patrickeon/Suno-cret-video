@@ -54,6 +54,7 @@ export default function Home() {
   const [discTheme, setDiscTheme] = useState("classic"); // 레코드 테마: classic/lp_vinyl/text_ring
   const [discRingText, setDiscRingText] = useState(""); // text_ring 테마 전용 커스텀 문구
   const [discArtFile, setDiscArtFile] = useState<File | null>(null); // 레코드 커버 전용 이미지(선택)
+  const [discLpArtFile, setDiscLpArtFile] = useState<File | null>(null); // lp_vinyl 라벨 전용 이미지(선택, 비우면 커버와 동일)
   const [progressBar, setProgressBar] = useState(false);
   const [progressBarPos, setProgressBarPos] = useState("bottom"); // 진행바 위치: bottom/top
   const [subPreview, setSubPreview] = useState(true); // 다음 소절 미리보기
@@ -390,6 +391,7 @@ export default function Home() {
       if (discTheme !== "classic") fd.append("disc_theme", discTheme);
       if (discRingText.trim()) fd.append("disc_ring_text", discRingText.trim());
       if (discArtFile) fd.append("disc_art", discArtFile);
+      if (discLpArtFile) fd.append("disc_lp_art", discLpArtFile);
       fd.append("progress_bar", String(progressBar));
       if (progressBarPos !== "bottom") fd.append("progress_bar_pos", progressBarPos);
       fd.append("sub_preview", String(subPreview));
@@ -460,6 +462,7 @@ export default function Home() {
       if (discTheme !== "classic") fd.append("disc_theme", discTheme);
       if (discRingText.trim()) fd.append("disc_ring_text", discRingText.trim());
       if (discArtFile) fd.append("disc_art", discArtFile);
+      if (discLpArtFile) fd.append("disc_lp_art", discLpArtFile);
       fd.append("progress_bar", String(progressBar));
       if (progressBarPos !== "bottom") fd.append("progress_bar_pos", progressBarPos);
       fd.append("sub_preview", String(subPreview));
@@ -1131,6 +1134,16 @@ export default function Home() {
                     icon="💿"
                     files={discArtFile ? [discArtFile] : []}
                     onFiles={(fs) => setDiscArtFile(fs[0] ?? null)}
+                  />
+                )}
+                {disc && discTheme === "lp_vinyl" && (
+                  <Dropzone
+                    label="LP 레코드 라벨 이미지 (선택 — 비우면 앨범 커버와 동일한 이미지 사용)"
+                    hint="jpg · png · webp"
+                    accept="image/*"
+                    icon="🖤"
+                    files={discLpArtFile ? [discLpArtFile] : []}
+                    onFiles={(fs) => setDiscLpArtFile(fs[0] ?? null)}
                   />
                 )}
                 {disc && (

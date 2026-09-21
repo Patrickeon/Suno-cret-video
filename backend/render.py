@@ -47,6 +47,9 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
     if opts.get("disc_art"):
         # 배경이 이미지 리스트든 video_bg 든 상관없이 독립적으로 덮어씀
         cmd += ["--disc-art", str(opts["disc_art"])]
+    if opts.get("disc_lp_art"):
+        # lp_vinyl 라벨 전용 이미지 (없으면 make_mv.py 가 disc_art 로 폴백)
+        cmd += ["--disc-lp-art", str(opts["disc_lp_art"])]
     if opts.get("disc_bg_style") and opts["disc_bg_style"] != "off":
         cmd += ["--disc-bg-style", str(opts["disc_bg_style"])]
     if opts.get("disc_theme") and opts["disc_theme"] != "classic":

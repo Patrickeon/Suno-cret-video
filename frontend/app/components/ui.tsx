@@ -88,9 +88,24 @@ export function Dropzone({
             <span className="text-[var(--text)]">{hint}</span>
           </p>
         ) : (
-          <p className="truncate text-sm text-[var(--text)]">
-            {icon} {files.length === 1 ? files[0].name : `${files.length}개 선택됨`}
-          </p>
+          <div className="flex items-center justify-center gap-2">
+            <p className="truncate text-sm text-[var(--text)]">
+              {icon} {files.length === 1 ? files[0].name : `${files.length}개 선택됨`}
+            </p>
+            <button
+              type="button"
+              title="선택 지우기"
+              aria-label="선택 지우기"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (ref.current) ref.current.value = "";
+                onFiles([]);
+              }}
+              className="shrink-0 rounded-full px-1.5 text-xs text-[var(--text-faint)] transition hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
+            >
+              ✕
+            </button>
+          </div>
         )}
       </div>
     </div>

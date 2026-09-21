@@ -234,6 +234,7 @@ async def create_render(
     bg: List[UploadFile] = File(default=[]),
     logo: Optional[UploadFile] = File(None),
     disc_art: Optional[UploadFile] = File(None),
+    disc_lp_art: Optional[UploadFile] = File(None),
     intro_clip: Optional[UploadFile] = File(None),
     outro_clip: Optional[UploadFile] = File(None),
     lyrics_text: str = Form(""),
@@ -295,6 +296,8 @@ async def create_render(
             _check_ext(logo.filename, IMAGE_EXTS, "로고")
         if disc_art is not None and disc_art.filename:
             _check_ext(disc_art.filename, IMAGE_EXTS, "앨범 커버 이미지")
+        if disc_lp_art is not None and disc_lp_art.filename:
+            _check_ext(disc_lp_art.filename, IMAGE_EXTS, "LP 레코드 라벨 이미지")
         for clip, lbl in ((intro_clip, "인트로 클립"), (outro_clip, "아웃트로 클립")):
             if clip is not None and clip.filename:
                 _check_ext(clip.filename, VIDEO_EXTS, lbl)
@@ -340,6 +343,11 @@ async def create_render(
             disc_art_path = os.path.join(d, "discart_" + disc_art.filename)
             _save_upload(disc_art, disc_art_path, MAX_IMAGE_MB)
 
+        disc_lp_art_path = None
+        if disc_lp_art is not None and disc_lp_art.filename:
+            disc_lp_art_path = os.path.join(d, "disclpart_" + disc_lp_art.filename)
+            _save_upload(disc_lp_art, disc_lp_art_path, MAX_IMAGE_MB)
+
         intro_path = outro_path = None
         if intro_clip is not None and intro_clip.filename:
             intro_path = os.path.join(d, "intro_" + intro_clip.filename)
@@ -361,6 +369,7 @@ async def create_render(
         "disc_theme": disc_theme,
         "disc_ring_text": disc_ring_text,
         "disc_art": disc_art_path,
+        "disc_lp_art": disc_lp_art_path,
         "progress_bar": progress_bar,
         "progress_bar_pos": progress_bar_pos,
         "title_caption": title_caption,

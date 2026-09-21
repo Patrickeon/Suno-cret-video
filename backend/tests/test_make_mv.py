@@ -216,9 +216,11 @@ def test_lp_vinyl_size_scale_only_affects_lp_vinyl_branches():
 
 
 def test_lp_vinyl_size_scale_enlarges_cover_relative_to_disc_diameter():
-    # 레퍼런스(sample/palylist_sample2.png) 실측: 커버 높이/프레임 높이 ≈0.64,
-    # disc_diameter() 가 가로형에 주는 값은 ≈0.42 — LP_VINYL_SIZE_SCALE 은 그
-    # 간극을 메우는 배율(>1)이어야 한다.
+    # 레퍼런스(sample/palylist_sample2.png, 일러스트 커버) 실측으로는 커버
+    # 높이/프레임 높이 ≈0.64 (SIZE_SCALE=1.5) 였으나, 실제 사용자 사진 커버로
+    # 렌더해보니(sample/playscreen.png) 조합 전체가 과하게 커 보인다는 피드백에
+    # 따라 SIZE_SCALE 을 1.3 으로 낮췄다 — 그래도 disc_diameter() 기본값(≈0.42)
+    # 보다는 뚜렷이 커야 한다(>1.0배 확대라는 의도 자체는 유지).
     import pytest
     assert mv.LP_VINYL_SIZE_SCALE > 1.0
     lay = mv.get_layout(False)
@@ -228,7 +230,8 @@ def test_lp_vinyl_size_scale_enlarges_cover_relative_to_disc_diameter():
     ratio_before = D / lay["H"]
     ratio_after = D_lp / lay["H"]
     assert ratio_before == pytest.approx(0.419, abs=0.01)
-    assert ratio_after == pytest.approx(0.63, abs=0.03)
+    assert ratio_after == pytest.approx(0.545, abs=0.03)
+    assert ratio_after > ratio_before  # 여전히 기본 disc_diameter() 보다는 크다
 
 
 def test_progress_bar_geometry_bottom_vs_top():
@@ -738,11 +741,223 @@ def test_progress_bar_handle_diameter_matches_measured_ratio():
 
 def test_title_caption_geometry_font_sizes_match_reference_ratios():
     # 레퍼런스(sample/playlist_sample1.png) 실측: 제목/아티스트 바운딩박스
-    # 높이 비율 ≈48:27(≈1.78), 제목-상단→아티스트-상단 간격/제목폰트 ≈1.3배.
+    # 높이 비율 ≈48:27(≈1.78). 제목-아티스트 줄 간격은 실측값(1.3배)에서
+    # 출발했지만, 제품 오너가 실제 렌더를 보고 "더 벌려 달라"고 재요청해
+    # 1.6배로 추가로 키웠다(디자인 의도 우선, 레퍼런스 실측치보다 우선한다).
     ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
         True, D=400, cy=324, H=1080, scale=1.0)
     assert ttl_fs == 62
     assert art_fs == 35
-    assert art_gap == int(round(ttl_fs * 1.3))
+    assert art_gap == int(round(ttl_fs * 1.6))
     # 기존(52/30) 대비 눈에 띄게 커져 레퍼런스처럼 굵고 큰 타이틀이 되어야 한다
     assert ttl_fs > 52 and art_fs > 30
+
+
+# ---------- 상단 진행바 + 상단 캡션 동시 배치 (확인된 버그: 겹침) -----------------
+
+def test_title_caption_geometry_top_pos_overlaps_progress_bar_without_fix_context():
+    """회귀 재현용 베이스라인: 진행바 정보(W/progress_bar) 없이 pos="top" 을 쓰면
+    (구 호출부와 동일한 하위호환 상태) 여전히 고정 40*scale 만 쓴다 — 이 값 자체는
+    진행바를 고려하지 않으므로, 진행바가 top 일 때 실제로 겹칠 수 있는 값이라는
+    것을 보여준다(다음 테스트가 W/progress_bar 인자를 주면 겹치지 않게 올라가는
+    것과 대비)."""
+    scale = 2 / 3
+    H = 720
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        False, 0, 0, H, scale, pos="top")
+    assert ttl_y == int(round(40 * scale))
+
+
+def test_title_caption_geometry_top_pos_clears_top_progress_bar_when_both_given():
+    """실제 재현한 버그(sample/playscreen.png, --title-caption-pos top
+    --progress-bar --progress-bar-pos top): 진행바 트랙 하단 y=31, 캡션 상단
+    y=27 로 겹쳤다. W/progress_bar/progress_bar_pos 를 주면 캡션 상단이 진행바
+    트랙 하단보다 항상 아래(겹치지 않는 지점)로 밀려야 한다."""
+    scale = 2 / 3
+    W, H = 1280, 720
+    _, _, pb_h, pb_y = mv.progress_bar_geometry(W, H, scale, "top")
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        False, 0, 0, H, scale, pos="top",
+        W=W, progress_bar=True, progress_bar_pos="top")
+    assert ttl_y >= pb_y + pb_h  # 트랙 하단과 겹치지 않음
+    assert ttl_y > int(round(40 * scale))  # 진행바가 없을 때보다 뚜렷이 아래로 밀림
+
+
+def test_title_caption_geometry_top_pos_unaffected_when_progress_bar_off():
+    """회귀 방지: progress_bar=False(기본값)면 W 를 줘도 기존과 완전히 동일한
+    고정 40*scale 이어야 한다 — 진행바가 꺼져 있으면 이 보정은 적용되지 않는다."""
+    scale = 1.0
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        False, 0, 0, 1080, scale, pos="top", W=1920, progress_bar=False)
+    assert ttl_y == int(round(40 * scale))
+
+
+def test_title_caption_geometry_top_pos_unaffected_when_progress_bar_at_bottom():
+    """회귀 방지: 진행바가 bottom 이면 top 캡션과 애초에 안 겹치므로 보정이
+    적용되지 않아야 한다."""
+    scale = 1.0
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        False, 0, 0, 1080, scale, pos="top",
+        W=1920, progress_bar=True, progress_bar_pos="bottom")
+    assert ttl_y == int(round(40 * scale))
+
+
+def test_title_caption_geometry_auto_pos_ignores_progress_bar_args():
+    """회귀 방지: pos="auto" 는 progress_bar/W 인자를 줘도 전혀 영향받지 않아야
+    한다(이 보정은 pos="top" 전용)."""
+    scale = 2 / 3
+    W, H = 1280, 720
+    D, cy = 300, 260
+    with_pb = mv.title_caption_geometry(
+        True, D, cy, H, scale, pos="auto", W=W,
+        progress_bar=True, progress_bar_pos="top")
+    without_pb = mv.title_caption_geometry(
+        True, D, cy, H, scale, pos="auto")
+    assert with_pb == without_pb
+
+
+def test_render_reserves_top_zone_for_disc_when_caption_and_progress_bar_both_top():
+    """render() 소스가 실제로 이 예약 로직을 구현하는지(디스크 cy 를 화면
+    전체가 아니라 예약 영역 아래 남은 공간의 중앙으로 다시 잡는지) 확인.
+    pos="auto" 이거나 진행바가 꺼져 있으면 이 블록이 아예 실행되지 않아
+    기존 cy 공식(base_cy)이 그대로 유지된다."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    disc_branch = render_src.split("if disc_active:")[1].split(
+        "if disc_bg_style ==")[0]
+    assert "base_cy" in disc_branch
+    assert "reserved_bottom" in disc_branch
+    assert 'title_caption_pos == "top"' in disc_branch
+    assert "pb_will_draw" in disc_branch
+
+
+def test_disc_top_zone_reservation_math_moves_disc_below_reserved_area():
+    """render() 와 동일한 예약 공식을 순수 함수 조합으로 재현해, 디스크 중심(cy)
+    이 실제로 예약 영역보다 아래로 내려가고, 커버 상단이 예약 영역과 겹치지
+    않는지 확인 — 버그 재현 치수(1280x720, --preview-secs 스케일).
+    """
+    scale = 2 / 3
+    lay = mv.get_layout(False, scale)
+    W, H = lay["W"], lay["H"]
+    ttl_fs0, art_fs0, ttl_y0, art_gap0 = mv.title_caption_geometry(
+        False, 0, 0, H, scale, pos="top", sub_zone=None,
+        W=W, progress_bar=True, progress_bar_pos="top")
+    cap_bottom = ttl_y0 + art_gap0 + art_fs0
+    disc_gap = int(round(24 * scale))
+    reserved_bottom = cap_bottom + disc_gap
+    cy = reserved_bottom + (H - reserved_bottom) // 2
+
+    base_cy = int(H * 0.30)
+    assert cy != base_cy  # 고정 중앙값에서 실제로 밀려나야 한다
+    assert cy > reserved_bottom  # 남은 공간의 중앙이므로 예약 영역보다 아래
+
+    D = mv.disc_diameter(lay)
+    D_lp = int(D * mv.LP_VINYL_SIZE_SCALE)
+    D_lp -= D_lp % 2
+    disc_top = cy - D_lp // 2
+    assert disc_top >= reserved_bottom - 1  # 디스크 상단이 예약 영역을 침범하지 않음
+
+
+# ---------- lp_vinyl: 커버+비닐 조합의 수평 중앙 정렬 / 상대 크기 --------------
+
+def test_lp_vinyl_render_branch_centers_combined_bounding_box_source():
+    """render() 의 lp_vinyl 분기가 커버만이 아니라 '커버+비닐 조합'의 바운딩
+    박스를 프레임 중앙에 맞추는 공식을 실제로 쓰는지 소스 레벨로 확인한다
+    (제품 오너 피드백: 비닐이 화면 오른쪽 끝까지 삐져나와 조합 전체가 오른쪽으로
+    쏠려 보였다 — sample/playscreen.png)."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    lp_branch = render_src.split(
+        'elif disc_theme == "lp_vinyl" and vinyl_png and cover_png:')[1].split(
+        'elif disc_theme == "text_ring"')[0]
+    assert "bbox_shift" in lp_branch
+    assert "cover_cx = W // 2 - bbox_shift" in lp_branch
+
+
+def test_lp_vinyl_bounding_box_centering_formula_is_centered():
+    """cover_cx = W/2 - bbox_shift 공식(render() 의 lp_vinyl 분기와 동일)이
+    실제로 '커버 왼쪽 끝 ~ 비닐 오른쪽 끝' 바운딩박스를 프레임 중앙에 놓는지
+    여러 해상도/방향에서 직접 계산해 검증한다."""
+    for shorts in (False, True):
+        lay = mv.get_layout(shorts)
+        W = lay["W"]
+        D = mv.disc_diameter(lay)
+        D_lp = int(D * mv.LP_VINYL_SIZE_SCALE)
+        D_lp -= D_lp % 2
+        VD = int(D_lp * mv.LP_VINYL_SCALE)
+        VD -= VD % 2
+        off_x = int(D_lp * mv.LP_VINYL_OFFSET)
+        bbox_shift = (off_x + VD // 2 - D_lp // 2) // 2
+        cover_cx = W // 2 - bbox_shift
+        left = cover_cx - D_lp // 2          # 커버 왼쪽 끝
+        right = cover_cx + off_x + VD // 2   # 비닐 오른쪽 끝
+        center = (left + right) / 2
+        assert abs(center - W / 2) <= 1  # 반올림 오차 이내로 프레임 중앙
+
+
+def test_lp_vinyl_cover_only_slightly_bigger_than_vinyl():
+    """제품 오너 피드백: "앨범이미지 좀 줄여, LP판보다 진짜 살짝 더 큰 정도로"
+    -> 커버(D_lp)가 비닐(VD)보다 크되 그 차이는 10% 미만이어야 한다."""
+    assert mv.LP_VINYL_SCALE > 0.93
+    lay = mv.get_layout(False)
+    D = mv.disc_diameter(lay)
+    D_lp = int(D * mv.LP_VINYL_SIZE_SCALE)
+    D_lp -= D_lp % 2
+    VD = int(D_lp * mv.LP_VINYL_SCALE)
+    VD -= VD % 2
+    ratio = D_lp / VD
+    assert 1.0 < ratio < 1.1
+
+
+# ---------- lp_vinyl: 비닐 표면 입체감(셰이딩) ----------------------------------
+
+def test_vinyl_shading_expr_returns_bounded_additive_expression():
+    expr = mv.vinyl_shading_expr("X", "Y", 150.0, 148.0, 33.0)
+    assert isinstance(expr, str) and expr
+    assert "exp(" in expr and "pow(" in expr
+    # 그루브/라벨 패스가 그대로 groove/r(X,Y) 등에 더할 수 있는 가산식이어야
+    # 하므로 괄호로 감싸져 있어야 한다(연산 우선순위 안전).
+    assert expr.startswith("(") and expr.endswith(")")
+
+
+def test_make_vinyl_png_shading_changes_pixels_vs_no_shading(tmp_path, monkeypatch):
+    """입체감 셰이딩을 껐을 때(가산식을 0으로)와 켰을 때 픽셀이 달라야 한다 —
+    "평면적으로 보인다"는 피드백에 대해 실제로 밝기 변화를 만들어내는지 확인."""
+    import pytest
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    off = tmp_path / "vinyl_no_shade.png"
+    monkeypatch.setattr(mv, "vinyl_shading_expr", lambda *a, **k: "0")
+    mv.make_vinyl_png(str(off), 200, "7DD3FC")
+    monkeypatch.undo()
+
+    on = tmp_path / "vinyl_shade.png"
+    mv.make_vinyl_png(str(on), 200, "7DD3FC")
+
+    a = Image.open(off).convert("RGB")
+    b = Image.open(on).convert("RGB")
+    assert list(a.getdata()) != list(b.getdata())
+
+
+# ---------- lp_vinyl: 커버/비닐 라벨 아트 분리 (--disc-lp-art) ------------------
+
+def test_disc_lp_art_cli_flag_declared(monkeypatch, capsys):
+    import pytest
+    monkeypatch.setattr("sys.argv", ["make_mv.py", "--help"])
+    with pytest.raises(SystemExit):
+        mv.main()
+    out = capsys.readouterr().out
+    assert "--disc-lp-art" in out
+
+
+def test_disc_lp_art_falls_back_to_cover_art_when_absent():
+    """main() 의 lp_vinyl 프리패스: --disc-lp-art 를 안 주면(또는 파일이 없으면)
+    비닐 라벨에 커버와 같은 art 를 그대로 쓰는 기존 폴백 동작을 유지해야 한다."""
+    import inspect
+    src = inspect.getsource(mv.main)
+    branch = src.split('if args.disc_theme == "lp_vinyl":')[1].split(
+        'elif args.disc_theme == "text_ring":')[0]
+    assert "args.disc_lp_art" in branch
+    assert "lp_art = art" in branch
+    assert "make_vinyl_png(vinyl_png, VD, accent, art_src=lp_art)" in branch
