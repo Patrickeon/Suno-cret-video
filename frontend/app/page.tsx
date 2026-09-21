@@ -23,6 +23,7 @@ import {
   VIZ_PALETTES,
   VisualMode,
   VISUAL_MODES,
+  DISC_STYLE_PRESETS,
 } from "./lib/studio";
 
 let toastSeq = 0;
@@ -49,7 +50,7 @@ export default function Home() {
   const [vizColor, setVizColor] = useState(""); // ""=기본 파스텔 그라데이션
   const [bgGrad, setBgGrad] = useState("");     // ""=bg_color 에서 자동 유도
   const [disc, setDisc] = useState(false);       // 레코드(회전 앨범아트) 모드
-  const [discBgStyle, setDiscBgStyle] = useState("off"); // 레코드 배경: off/glow/radial
+  const [discBgStyle, setDiscBgStyle] = useState("glow"); // 레코드 배경: off/glow/radial (기본 glow — 앨범아트 블러 배경이 샘플 기본 룩)
   const [discTheme, setDiscTheme] = useState("classic"); // 레코드 테마: classic/lp_vinyl/text_ring
   const [discRingText, setDiscRingText] = useState(""); // text_ring 테마 전용 커스텀 문구
   const [discArtFile, setDiscArtFile] = useState<File | null>(null); // 레코드 커버 전용 이미지(선택)
@@ -66,6 +67,7 @@ export default function Home() {
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
   const [titleCaption, setTitleCaption] = useState(false); // 제목·아티스트 상시 표시 캡션
+  const [titleCaptionPos, setTitleCaptionPos] = useState("auto"); // 캡션 위치: auto/top
   const [watermark, setWatermark] = useState("");
   const [align, setAlign] = useState(false);
 
@@ -150,6 +152,33 @@ export default function Home() {
     setTheme(document.documentElement.classList.contains("light") ? "light" : "dark");
   }, []);
 
+  // 채널 정체성(아티스트명·워터마크)은 영상마다 바뀌는 제목/가사와 달리 매번
+  // 똑같이 재입력하게 되는 값이라 localStorage 에 기억해뒀다가 자동으로 채운다.
+  useEffect(() => {
+    try {
+      const savedArtist = localStorage.getItem("mv_channel_artist");
+      const savedWatermark = localStorage.getItem("mv_channel_watermark");
+      if (savedArtist) setArtist(savedArtist);
+      if (savedWatermark) setWatermark(savedWatermark);
+    } catch {
+      /* localStorage 불가 환경 무시 */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      if (artist) localStorage.setItem("mv_channel_artist", artist);
+    } catch {
+      /* 무시 */
+    }
+  }, [artist]);
+  useEffect(() => {
+    try {
+      if (watermark) localStorage.setItem("mv_channel_watermark", watermark);
+    } catch {
+      /* 무시 */
+    }
+  }, [watermark]);
+
   function toggleTheme() {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
@@ -220,10 +249,11 @@ export default function Home() {
     const name = window.prompt("프리셋 이름을 입력하세요")?.trim();
     if (!name) return;
     const snap = {
-      viz, vizColor, bgGrad, disc, discBgStyle, progressBar, subPreview,
-      shorts, kenburns, bgColor, watermark, align, res, fps,
+      viz, vizColor, bgGrad, disc, discBgStyle, discTheme, discRingText,
+      progressBar, progressBarPos, subPreview,
+      shorts, kenburns, bgColor, artist, watermark, align, res, fps,
       normalize, master, karaoke, fadeIn, fadeOut, vignette, filmGrain,
-      sparkle, outroCta, outroCtaText,
+      sparkle, outroCta, outroCtaText, titleCaption, titleCaptionPos,
       subColor, subSize, subPos, clipLen,
     };
     persistPresets({ ...presets, [name]: snap });
@@ -241,11 +271,15 @@ export default function Home() {
     setBgGrad(str("bgGrad", ""));
     setDisc(b("disc", false));
     setDiscBgStyle(str("discBgStyle", "off"));
+    setDiscTheme(str("discTheme", "classic"));
+    setDiscRingText(str("discRingText", ""));
     setProgressBar(b("progressBar", false));
+    setProgressBarPos(str("progressBarPos", "bottom"));
     setSubPreview(b("subPreview", true));
     setShorts(b("shorts", false));
     setKenburns(b("kenburns", true));
     setBgColor(str("bgColor", "0x0a0a14"));
+    setArtist(str("artist", artist));
     setWatermark(str("watermark", ""));
     setAlign(b("align", false));
     setRes(str("res", "1080"));
@@ -260,6 +294,8 @@ export default function Home() {
     setSparkle(b("sparkle", false));
     setOutroCta(b("outroCta", false));
     setOutroCtaText(str("outroCtaText", ""));
+    setTitleCaption(b("titleCaption", false));
+    setTitleCaptionPos(str("titleCaptionPos", "auto"));
     setSubColor(str("subColor", "FFFFFF"));
     setSubSize(num("subSize", 1));
     setSubPos(str("subPos", "bottom"));
@@ -284,6 +320,20 @@ export default function Home() {
     setInterludeNote(preset.apply.interludeNote);
     setStoryboardScenes(preset.storyboardScenes);
     toast(`${preset.emoji} ${preset.label} 모드 적용`, "info");
+  }
+
+  function applyDiscStylePreset(id: string) {
+    const preset = DISC_STYLE_PRESETS.find((p) => p.id === id);
+    if (!preset) return;
+    setDisc(preset.apply.disc);
+    setDiscTheme(preset.apply.discTheme);
+    setDiscBgStyle(preset.apply.discBgStyle);
+    if (preset.apply.bgColor) setBgColor(preset.apply.bgColor);
+    setTitleCaption(preset.apply.titleCaption);
+    setTitleCaptionPos(preset.apply.titleCaptionPos);
+    setProgressBar(preset.apply.progressBar);
+    setProgressBarPos(preset.apply.progressBarPos);
+    toast(`${preset.emoji} '${preset.label}' 스타일 적용 — 샘플 이미지와 동일한 구도예요`, "info");
   }
 
   function deletePreset(name: string) {
@@ -317,8 +367,8 @@ export default function Home() {
       toast("음원 파일을 선택하세요.", "error");
       return;
     }
-    if (disc && bgFiles.length === 0) {
-      toast("💿 레코드 모드는 배경 이미지(앨범아트)가 필요해요 — 이번 렌더에선 생략돼요.", "info");
+    if (disc && bgFiles.length === 0 && !discArtFile) {
+      toast("💿 앨범아트가 없어 기본 커버(그라데이션+♪)로 렌더돼요.", "info");
     }
     setSubmitting(true);
     setJob(null);
@@ -352,6 +402,7 @@ export default function Home() {
       fd.append("title", title);
       fd.append("artist", artist);
       fd.append("title_caption", String(titleCaption));
+      if (titleCaptionPos !== "auto") fd.append("title_caption_pos", titleCaptionPos);
       fd.append("watermark", watermark);
       fd.append("align", align ? "auto" : "none");
       fd.append("res", res);
@@ -428,6 +479,7 @@ export default function Home() {
       fd.append("watermark", watermark);
       fd.append("title", f.name.replace(/\.[^.]+$/, ""));
       fd.append("title_caption", String(titleCaption));
+      if (titleCaptionPos !== "auto") fd.append("title_caption_pos", titleCaptionPos);
       try {
         await apiFetch(`${API}/api/render`, { method: "POST", body: fd });
       } catch {
@@ -1054,6 +1106,24 @@ export default function Home() {
                 <Toggle checked={kenburns} onChange={setKenburns} label="배경 켄 번스(줌·팬) 효과" />
                 <Toggle checked={disc} onChange={setDisc} label="💿 레코드 모드 (첫 배경 이미지가 원형으로 회전)" />
                 {disc && (
+                  <Field label="레코드 스타일 프리셋 (샘플 이미지와 동일한 구도로 한 번에 적용)">
+                    <div className="flex flex-wrap gap-2">
+                      {DISC_STYLE_PRESETS.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => applyDiscStylePreset(p.id)}
+                          title={p.description}
+                          className="flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-xs text-[var(--text-dim)] transition hover:bg-[var(--surface-3)]"
+                        >
+                          <span>{p.emoji}</span>
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </Field>
+                )}
+                {disc && (
                   <Dropzone
                     label="앨범 커버 이미지 (선택 — 비우면 첫 배경 이미지 사용)"
                     hint="jpg · png · webp"
@@ -1064,21 +1134,39 @@ export default function Home() {
                   />
                 )}
                 {disc && (
+                  <Field label="레코드 테마">
+                    <select
+                      value={discTheme}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setDiscTheme(next);
+                        // LP 바이닐·텍스트 링은 블러 배경(글로우)과 짝지어질 때 샘플처럼
+                        // 자연스러워 보여서, 사용자가 배경 스타일을 아직 안 건드렸으면
+                        // (=off 기본값) 자동으로 켜준다. 이미 다른 값으로 바꿨다면 존중.
+                        if ((next === "lp_vinyl" || next === "text_ring") && discBgStyle === "off") {
+                          setDiscBgStyle("glow");
+                        }
+                      }}
+                      className={inputCls}
+                    >
+                      <option value="classic">🎨 클래식 (앨범아트가 원형으로 회전)</option>
+                      <option value="lp_vinyl">🎵 LP 바이닐 (커버 뒤로 비닐이 살짝 도는 느낌)</option>
+                      <option value="text_ring">🔤 텍스트 링 (커버 둘레를 도는 문구)</option>
+                      <option value="square_spin">🔲 스퀘어 스핀 (사각 커버가 그대로 회전)</option>
+                    </select>
+                    {(discTheme === "lp_vinyl" || discTheme === "text_ring") && (
+                      <p className="text-[11px] text-[var(--text-faint)]">
+                        커버 뒤로 블러 배경(글로우)이 자동 적용돼요 — 아래 &ldquo;레코드 배경 스타일&rdquo;에서 바꿀 수 있어요.
+                      </p>
+                    )}
+                  </Field>
+                )}
+                {disc && (
                   <Field label="레코드 배경 스타일">
                     <select value={discBgStyle} onChange={(e) => setDiscBgStyle(e.target.value)} className={inputCls}>
                       <option value="off">기본 (배경 그대로)</option>
                       <option value="glow">✨ 글로우 (앨범아트 블러+채도업으로 배경 채움)</option>
                       <option value="radial">🌈 헤일로 (디스크 뒤 컬러 글로우, 음악에 반응)</option>
-                    </select>
-                  </Field>
-                )}
-                {disc && (
-                  <Field label="레코드 테마">
-                    <select value={discTheme} onChange={(e) => setDiscTheme(e.target.value)} className={inputCls}>
-                      <option value="classic">🎨 클래식 (앨범아트가 원형으로 회전)</option>
-                      <option value="lp_vinyl">🎵 LP 바이닐 (커버 뒤로 비닐이 살짝 도는 느낌)</option>
-                      <option value="text_ring">🔤 텍스트 링 (커버 둘레를 도는 문구)</option>
-                      <option value="square_spin">🔲 스퀘어 스핀 (사각 커버가 그대로 회전)</option>
                     </select>
                   </Field>
                 )}
@@ -1123,6 +1211,14 @@ export default function Home() {
                   </Field>
                 </div>
                 <Toggle checked={titleCaption} onChange={setTitleCaption} label="🏷️ 제목·아티스트 상시 표시 (화면에 계속 나옴, 인트로 카드와 별개)" />
+                {titleCaption && (
+                  <Field label="캡션 위치">
+                    <select value={titleCaptionPos} onChange={(e) => setTitleCaptionPos(e.target.value)} className={inputCls}>
+                      <option value="auto">자동 (레코드 모드면 디스크 바로 아래)</option>
+                      <option value="top">화면 상단 (레코드 모드여도 항상 위)</option>
+                    </select>
+                  </Field>
+                )}
                 <Field label="워터마크 (우하단)">
                   <input value={watermark} onChange={(e) => setWatermark(e.target.value)} placeholder="@내채널" className={inputCls} />
                 </Field>

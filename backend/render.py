@@ -59,6 +59,8 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--progress-bar-pos", str(opts["progress_bar_pos"])]
     if opts.get("title_caption"):
         cmd += ["--title-caption"]
+    if opts.get("title_caption_pos") and opts["title_caption_pos"] != "auto":
+        cmd += ["--title-caption-pos", str(opts["title_caption_pos"])]
     if opts.get("sub_preview"):
         cmd += ["--sub-preview"]
 

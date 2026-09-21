@@ -180,6 +180,50 @@ export const VISUAL_MODES: VisualModePreset[] = [
   },
 ];
 
+// 레코드 모드 "룩" 프리셋 — sample/ 레퍼런스 이미지와 동일한 구도로 한 번에 맞춘다.
+// (disc 회전 테마/배경/캡션 위치처럼 서로 맞물려야 하는 설정들을 한 클릭으로 묶어줌)
+export interface DiscStylePreset {
+  id: string;
+  label: string;
+  emoji: string;
+  description: string;
+  apply: {
+    disc: boolean;
+    discTheme: string;
+    discBgStyle: string;
+    bgColor?: string;
+    titleCaption: boolean;
+    titleCaptionPos: string;
+    progressBar: boolean;
+    progressBarPos: string;
+  };
+}
+
+export const DISC_STYLE_PRESETS: DiscStylePreset[] = [
+  {
+    id: "sample_text_ring",
+    label: "텍스트 링",
+    emoji: "🔤",
+    description: "커버 둘레를 도는 문구 + 블러 배경(글로우) + 디스크 아래 제목/아티스트 + 상단 진행바",
+    apply: {
+      disc: true, discTheme: "text_ring", discBgStyle: "glow",
+      titleCaption: true, titleCaptionPos: "auto",
+      progressBar: true, progressBarPos: "top",
+    },
+  },
+  {
+    id: "sample_lp_vinyl",
+    label: "LP 바이닐",
+    emoji: "💿",
+    description: "커버 뒤로 비닐이 삐져나오는 구도 + 플랫 핑크 배경 + 화면 상단 제목/아티스트",
+    apply: {
+      disc: true, discTheme: "lp_vinyl", discBgStyle: "off", bgColor: "0xF9A8D4",
+      titleCaption: true, titleCaptionPos: "top",
+      progressBar: false, progressBarPos: "bottom",
+    },
+  },
+];
+
 export const PRESETS = [
   { name: "포근", emoji: "🧸", viz: "waves", vizColor: "", kenburns: true, bg: "0x1a1424" },
   { name: "Lo-fi", emoji: "🌙", viz: "waves", vizColor: "A5B4FC,C4B5FD", kenburns: true, bg: "0x12101a" },

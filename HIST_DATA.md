@@ -2,12 +2,17 @@
 
 > 다음 세션에서 이 파일을 먼저 읽고 이어서 진행할 것. 완료된 항목은 지우지 말고 [x]로 체크만 표시.
 
-## 현재 상태 (2026-07-10 기준)
+## 현재 상태 (2026-09-22 기준)
 
-- **커밋 안 됨.** `make_mv.py`만 수정된 상태로 워킹트리에 남아있음 (unstaged).
-  `git diff --stat` → `make_mv.py | 69 ++++++++++++++++++++++++++++++++++++++++++++++++++++++--------`
-- 마지막 실제 커밋: `6bb21e9 feat(paths): 로컬/GCP 저장 경로 설정 분리 — 로컬 기본값은 '문서' 폴더`
-- **사용자가 커밋 여부를 아직 확정 안 함** — 커밋 전 재확인 필요.
+- **이번 세션 작업 전부 완료+검증됨, 커밋/푸시 완료.** 아래 "### 6." 항목 참고.
+- 마지막 실제 커밋 전 HEAD: `7588a17 feat: Visual Mode presets, record themes, AI album cover, lyric prompt filtering`
+- 로컬 개발 서버는 `backend` 8001포트(uvicorn), `frontend` 3000포트(next dev)로 떠 있었음 —
+  **`frontend/.env.local`의 `NEXT_PUBLIC_API_BASE`가 8001을 가리키므로 백엔드는 반드시 8001로
+  띄울 것** (8000으로 띄우면 프론트가 연결 못 해서 "미리보기 실패"처럼 보이는데, 실제로는
+  포트 불일치 — 이번 세션에서 실제로 이 문제로 삽질했음).
+- **미완료(다음 세션 확인 필요)**: `square_spin` 테마엔 그림자 미적용(의도적 스킵, 아래 참고).
+  브라우저 자동화 확장(claude-in-chrome) 미연결로 실제 웹 UI 클릭 테스트는 못 함 — CLI
+  렌더+프레임 비교로만 검증됨. 다음 세션에서 브라우저로 실제 클릭 테스트 권장.
 
 ## 이번 세션에서 한 일
 
@@ -100,6 +105,49 @@ AskUserQuestion으로 확인, **"둘 다 만들고 토글로 선택"** 응답 �
 - 배선: make_mv.py(CLI+build_bg+render) → render.py → main.py → agent.py →
   page.tsx(레코드 모드 토글 활성 시에만 보이는 배경 스타일 드롭다운, 프리셋 포함).
 - pytest 89→92개, 실제 렌더로 회전/글로우/헤일로 반응성 전부 프레임 diff 검증.
+
+### 6. 레코드 테마(lp_vinyl/text_ring) 샘플 이미지 매칭 (2026-09-22 세션) — 구현+검증 완료, 커밋됨
+
+사용자가 `sample/playlist_sample1.png`(text_ring), `sample/palylist_sample2.png`(lp_vinyl),
+`sample/plauscreen.png`(실제 렌더 스크린샷)를 주고 "이 샘플들과 동일하게 나오게" 요청.
+여러 라운드에 걸쳐 실측→수정→재검증을 반복함. **media-engineer 서브에이전트를 3회 사용**
+(사용자가 명시적으로 "agent로 돌려"라고 지적한 뒤부터 FFmpeg/지오메트리 작업은 전부 위임).
+
+- **비대칭 오프셋 도입**: `lp_vinyl`(비닐이 커버 뒤에서 오른쪽으로 삐져나옴)과 `text_ring`
+  (텍스트 링이 왼쪽에 초승달로만 보임) 둘 다 처음엔 대칭 헤일로로 나오던 걸 수정.
+  `LP_VINYL_SCALE/OFFSET`, `TEXT_RING_SCALE/OFFSET` 상수 신설(PNG 생성부/오버레이부 공유).
+- **앨범아트 없어도 레코드 모드 동작**: `make_default_cover_png()` 신설 — 그라데이션+♪
+  아이콘을 Pillow 없이 순수 ffmpeg(gradients lavfi + drawtext)로 생성, `--disc-art`/`--bg`
+  둘 다 없어도 항상 폴백.
+- **디스크 스타일 프리셋(프론트)**: `frontend/app/lib/studio.ts`의 `DISC_STYLE_PRESETS` —
+  "텍스트 링"/"LP 바이닐" 버튼 한 번으로 테마+배경스타일+캡션위치+진행바를 샘플과 동일하게
+  일괄 적용. `titleCaptionPos`(auto/top) 신규 옵션도 이때 추가(LP 바이닐 샘플은 캡션이
+  레코드와 무관하게 항상 상단에 있어서 필요했음). 아티스트명/워터마크(채널 정체성)는
+  localStorage에 자동 저장·복원되도록 함(매번 재입력 불필요).
+- **캡션↔자막 겹침 버그 발견·수정**: `title_caption`(디스크 아래 배치)과 자막이 저해상도
+  프리뷰에서 겹치는 걸 발견 → `subtitle_zone_y()` 신설, 겹칠 때만 캡션을 자막 아래로 밀어냄.
+- **LP 바이닐 실측 재보정(2라운드)**: 처음 잡은 오프셋 값이 대략적인 눈대중이라 사용자가
+  "완전히 다르다"고 재지적 → 커버 크기(`LP_VINYL_SIZE_SCALE=1.5`), 비닐 라벨에 실제
+  앨범아트를 원형 크롭해 합성(회전과 함께 돎, `make_vinyl_png(..., art_src=...)`), 진행바
+  폭 축소(`PROGRESS_BAR_WIDTH_FRAC=0.27`, 기존 거의 풀와이드였음) — 모두 PIL 픽셀 실측
+  기반. 이 과정에서 크기 확대로 인해 비닐이 화면 위로 잘리는 신규 버그 발생 → 원 피팅
+  (circle fit)으로 재실측해 `LP_VINYL_SCALE`을 1.3→0.90, `OFFSET`을 0.40→0.51로 교정.
+- **배경 처리 개선**: `discBgStyle` 프론트 기본값 `off`→`glow`. 백엔드 `build_bg()`는
+  `bg_list`가 비면 `disc_bg_style`을 무시하고 그라데이션으로 빠지는 갭이 있었음 → 별도
+  배경 이미지가 없고 `glow`일 때 앨범아트 자체를 배경 블러 소스로 쓰도록 `main()`에서
+  `bg_for_render` 폴백 추가(scrim 자동 on 조건도 같이 갱신).
+- **최종 폴리시(3라운드, media-engineer)**: 진행바에 원형 흰색 핸들(시간에 따라 이동,
+  `pill_alpha_expr` 재사용) 추가, 커버↔캡션 간격을 `D*0.17`로(기존 거의 붙어있었음),
+  정사각 커버에 방향성 있는 소프트 드롭섀도(`add_square_shadow()`, 위쪽은 그대로 아래
+  쪽만 퍼짐 — 샘플 실측 기반), 제목/아티스트 폰트 52→62 / 30→35 + 줄간격 확대.
+  `square_spin`은 회전 각도가 임의라 그림자를 안 돌리면 안 맞아서 의도적으로 스킵(주석 있음).
+- **검증**: `pytest backend/tests` 89(세션 시작)→**166개 전부 통과**. 매 라운드마다
+  `--preview-secs` 짧은 렌더 후 ffmpeg로 프레임 추출, `sample/*.png`와 육안+PIL 픽셀
+  비교(원 피팅, edge detection 등)로 실측 기반 수정. `frontend`: `tsc --noEmit`/`npm run
+  lint` 매 라운드 통과.
+- 배선: `make_mv.py`(신규 상수/함수 다수) → `backend/render.py`/`backend/main.py`
+  (`title_caption_pos` 필드 추가) → `frontend/app/lib/studio.ts`(`DISC_STYLE_PRESETS`) →
+  `frontend/app/page.tsx`(프리셋 버튼, 캡션 위치 선택, 채널 정체성 자동 저장).
 
 **⚠️ 이번 세션에서 발견한 중요 리스크 (다음 세션 최우선 확인)**:
 GCP 프로젝트(`vaulted-channel-462701-p0`) 권한이 **`patrick@5node.co.kr` 계정에만** 있음

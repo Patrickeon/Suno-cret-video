@@ -188,6 +188,49 @@ def test_disc_diameter_even_and_orientation():
     assert d_short == int(1080 * 0.55) - (int(1080 * 0.55) % 2)
 
 
+def test_lp_vinyl_size_scale_only_affects_lp_vinyl_branches():
+    """disc_diameter() 는 classic/text_ring/square_spin 이 공유하므로 절대
+    바꾸면 안 된다 — 대신 LP_VINYL_SIZE_SCALE 은 lp_vinyl 전용 분기(main() 프리
+    패스, render() 오버레이)에서만 D 에 곱해져야 한다(소스 레벨 확인)."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+    render_src = inspect.getsource(mv.render)
+
+    main_branch = main_src.split('if args.disc_theme == "lp_vinyl":')[1].split(
+        'elif args.disc_theme == "text_ring":')[0]
+    assert "LP_VINYL_SIZE_SCALE" in main_branch
+
+    render_branch = render_src.split(
+        'elif disc_theme == "lp_vinyl" and vinyl_png and cover_png:')[1].split(
+        'elif disc_theme == "text_ring"')[0]
+    assert "LP_VINYL_SIZE_SCALE" in render_branch
+
+    # text_ring/square_spin/classic 분기엔 LP_VINYL_SIZE_SCALE 이 전혀 등장하면 안 됨
+    text_ring_main_branch = main_src.split('elif args.disc_theme == "text_ring":')[1].split(
+        'elif args.disc_theme == "square_spin":')[0]
+    assert "LP_VINYL_SIZE_SCALE" not in text_ring_main_branch
+
+    text_ring_render_branch = render_src.split('elif disc_theme == "text_ring"')[1].split(
+        "# 자막 burn-in")[0]
+    assert "LP_VINYL_SIZE_SCALE" not in text_ring_render_branch
+
+
+def test_lp_vinyl_size_scale_enlarges_cover_relative_to_disc_diameter():
+    # 레퍼런스(sample/palylist_sample2.png) 실측: 커버 높이/프레임 높이 ≈0.64,
+    # disc_diameter() 가 가로형에 주는 값은 ≈0.42 — LP_VINYL_SIZE_SCALE 은 그
+    # 간극을 메우는 배율(>1)이어야 한다.
+    import pytest
+    assert mv.LP_VINYL_SIZE_SCALE > 1.0
+    lay = mv.get_layout(False)
+    D = mv.disc_diameter(lay)
+    D_lp = int(D * mv.LP_VINYL_SIZE_SCALE)
+    D_lp -= D_lp % 2
+    ratio_before = D / lay["H"]
+    ratio_after = D_lp / lay["H"]
+    assert ratio_before == pytest.approx(0.419, abs=0.01)
+    assert ratio_after == pytest.approx(0.63, abs=0.03)
+
+
 def test_progress_bar_geometry_bottom_vs_top():
     W, H = 1920, 1080
     mx_b, bw_b, bh_b, y_b = mv.progress_bar_geometry(W, H, 1.0, "bottom")
@@ -207,6 +250,18 @@ def test_progress_bar_geometry_default_pos_is_bottom():
     # --progress-bar-pos 기본값(bottom)과 동일한 결과여야 한다
     W, H = 1080, 1920
     assert mv.progress_bar_geometry(W, H, 1.0) == mv.progress_bar_geometry(W, H, 1.0, "bottom")
+
+
+def test_progress_bar_geometry_is_narrow_and_centered():
+    # 디자인 레퍼런스(sample/playlist_sample1.png)를 PIL 로 실측하면
+    # bar_width/image_width ≈0.26 인 가운데 정렬 알약형 바다. 예전 공식
+    # (margin_x=70px 고정)은 1920 폭 기준 bar_w/W ≈0.93(거의 풀폭)이었다.
+    for W, H in [(1920, 1080), (1080, 1920), (3840, 2160)]:
+        margin_x, bar_w, bar_h, _ = mv.progress_bar_geometry(W, H, 1.0)
+        ratio = bar_w / W
+        assert 0.20 <= ratio <= 0.35, (W, H, ratio)
+        # 좌우 여백이 같아야 가운데 정렬(margin_x*2 + bar_w == W, 반올림 오차 허용)
+        assert abs((margin_x * 2 + bar_w) - W) <= 1
 
 
 def test_pill_alpha_expr_static_track_has_no_time_var():
@@ -236,6 +291,51 @@ def test_title_caption_geometry_disc_inactive_positions_near_top():
     ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
         False, D=0, cy=0, H=1080, scale=1.0)
     assert ttl_y < 1080 / 4  # 화면 상단 근처 (기본 하단 자막과 안 겹치게)
+
+
+def test_subtitle_zone_y_bottom_matches_margin_v():
+    lay = mv.get_layout(shorts=False, scale=1.0)
+    zone_top, zone_bottom = mv.subtitle_zone_y(lay, sub_pos="bottom")
+    # Alignment=2 의 MarginV 는 화면 하단에서 잰다 -> zone_bottom == H - margin_v
+    assert zone_bottom == lay["H"] - lay["margin_v"]
+    assert zone_top < zone_bottom
+
+
+def test_title_caption_geometry_disc_active_avoids_overlapping_subtitle_zone():
+    # 실제 버그 재현 치수(1280x720, --preview-secs 로 스케일된 레이아웃)에서
+    # 자막 안전영역과 겹치던 케이스 -> 캡션이 자막 아래로 내려가야 한다.
+    lay = mv.get_layout(shorts=False, scale=2 / 3)
+    D = mv.disc_diameter(lay)
+    cy = int(lay["H"] * 0.36)
+    sub_zone = mv.subtitle_zone_y(lay, sub_pos="bottom")
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        True, D, cy, lay["H"], scale=2 / 3, pos="auto", sub_zone=sub_zone)
+    cap_bottom = ttl_y + art_gap + art_fs
+    sub_top, sub_bottom = sub_zone
+    # 캡션 블록(제목~아티스트)이 자막 안전영역과 겹치면 안 된다
+    assert not (ttl_y < sub_bottom and cap_bottom > sub_top)
+    # 디스크 바로 아래가 아니라 자막 영역보다 아래로 내려갔어야 한다
+    assert ttl_y >= sub_bottom
+
+
+def test_title_caption_geometry_no_sub_zone_keeps_legacy_placement():
+    # sub_zone 을 주지 않으면(기존 호출부와 하위호환) 기존 동작과 동일하게
+    # 디스크 바로 아래에 그대로 배치된다. 여백은 D 의 0.17배(레퍼런스
+    # sample/playlist_sample1.png 실측: 커버-캡션 간격 58px / D_ref 346px).
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        True, D=400, cy=324, H=1080, scale=1.0, sub_zone=None)
+    assert ttl_y == 324 + 200 + int(round(400 * 0.17))
+
+
+def test_title_caption_geometry_small_disc_unaffected_by_sub_zone():
+    # 디스크가 작아 자막 영역과 애초에 겹치지 않는 경우, sub_zone 을 줘도
+    # 기존 '디스크 바로 아래' 위치가 그대로 유지돼야 한다(회귀 방지)
+    lay = mv.get_layout(shorts=False, scale=1.0)
+    sub_zone = mv.subtitle_zone_y(lay, sub_pos="bottom")
+    D, cy = 100, 200
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        True, D, cy, lay["H"], scale=1.0, pos="auto", sub_zone=sub_zone)
+    assert ttl_y == cy + D // 2 + int(round(D * 0.17))
 
 
 def test_sparkle_params_deterministic_and_in_range():
@@ -328,6 +428,49 @@ def test_make_vinyl_png_generates_file(tmp_path):
     out = tmp_path / "vinyl.png"
     mv.make_vinyl_png(str(out), 300, "7DD3FC")
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_make_vinyl_png_with_art_src_embeds_label_not_flat_accent(tmp_path):
+    """디자인 레퍼런스(sample/palylist_sample2.png)처럼 라벨이 flat accent 색이
+    아니라 실제 앨범아트를 반영해야 한다: art_src 를 주면 라벨 영역 픽셀이
+    art_src 없이 생성한 flat-accent 버전과 달라야 한다."""
+    import pytest
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    art = tmp_path / "art.png"
+    mv.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+            "-i", "color=c=0x0000FF:s=300x300:r=1",
+            "-frames:v", "1", str(art)])
+
+    flat = tmp_path / "vinyl_flat.png"
+    mv.make_vinyl_png(str(flat), 300, "FF0000")
+
+    with_art = tmp_path / "vinyl_art.png"
+    mv.make_vinyl_png(str(with_art), 300, "FF0000", art_src=str(art))
+
+    assert with_art.exists() and with_art.stat().st_size > 0
+    assert not (tmp_path / "_vinyl_art_base.png").exists()  # 임시 파일 정리됨
+
+    D = 300
+    c = D // 2
+    label_r = D * 0.22
+    # 홀은 피하고 라벨 링 안쪽의 한 점을 확인(중심에서 label_r/2 만큼 오프셋)
+    probe = (c + int(label_r / 2), c)
+    flat_px = Image.open(flat).convert("RGB").getpixel(probe)
+    art_px = Image.open(with_art).convert("RGB").getpixel(probe)
+    assert art_px != flat_px
+    # art_src 가 순수 파랑이었으니 art 버전은 red accent(flat_px)보다 파랑에 가까워야 함
+    assert art_px[2] > art_px[0]
+
+
+def test_make_vinyl_png_no_art_src_falls_back_to_flat_accent(tmp_path):
+    """art_src 를 주지 않으면(폴백) 이전과 동일하게 라벨이 flat accent 색이어야
+    하며, 3단 합성 임시 파일도 생기지 않아야 한다(단일 geq 패스로 처리)."""
+    out = tmp_path / "vinyl.png"
+    mv.make_vinyl_png(str(out), 300, "7DD3FC")
+    assert out.exists()
+    assert not any(tmp_path.glob("_vinyl_*"))
 
 
 def test_make_square_png_crops_without_mask(tmp_path):
@@ -479,3 +622,127 @@ def test_suno_example_reduces_to_real_lyric_lines_only():
     ]
     assert kept == expected
     assert len(dropped) == len(lines) - len(expected)
+
+
+# ---------- 앨범 커버 드롭섀도우 (add_square_shadow) ----------
+
+def test_add_square_shadow_returns_new_label_and_appends_blur_chain():
+    parts = []
+    new_label = mv.add_square_shadow(parts, "[cur]", 300, 100, 50, 30, "x")
+    assert new_label != "[cur]"
+    assert new_label.startswith("[") and new_label.endswith("]")
+    joined = ";".join(parts)
+    assert "gblur=sigma=" in joined
+    assert "color=c=black" in joined
+    # 캔버스 소스와 최종 합성 오버레이 두 파트가 순서대로 추가돼야 한다
+    assert len(parts) == 2
+    assert new_label in parts[1]
+
+
+def test_add_square_shadow_offsets_by_pad_and_slight_downward_bias():
+    # 레퍼런스(sample/playlist_sample1.png) 실측: 위쪽은 안팎 밝기 차이가
+    # 거의 없고(89 vs 91) 아래쪽만 뚜렷이 어두워진다(67 -> 100px 아래 192).
+    # offset_y == pad 로 두면 섀도우의 흐려진 윗부분이 정확히 커버 뒤로
+    # 완전히 숨고(위쪽 노출 0) 아랫부분만 2*pad 만큼 드러난다 — 매직 넘버가
+    # 아니라 pad 자체에서 유도된 값이어야 한다.
+    parts = []
+    size, x, y = 300, 100, 50
+    mv.add_square_shadow(parts, "[cur]", size, x, y, 30, "x")
+    sigma = max(4, int(round(size * 0.035)))
+    pad = max(sigma * 3, int(round(size * 0.10)))
+    offset_y = pad
+    overlay_part = parts[1]
+    assert f"overlay={x - pad}:{y - pad + offset_y}" in overlay_part
+    # sy == y : 섀도우 캔버스 상단이 커버 상단과 정확히 겹쳐(=위쪽 비노출)
+    assert f"overlay={x - pad}:{y}" in overlay_part
+
+
+def test_add_square_shadow_pad_large_enough_to_avoid_clipping_blur():
+    # 회귀 방지: 초기 구현은 pad(size*0.06)가 sigma(size*0.035)의 ~1.6배뿐이라
+    # gblur 가 캔버스 경계에서 잘려(하드 클립) 15~20px 만에 사라지는 버그가
+    # 있었다(실제 렌더 프레임을 PIL 로 재측정해 발견). pad 는 sigma 의 최소
+    # 3배는 되어야 가우시안 낙차가 캔버스 안에서 자연스럽게 다 그려진다.
+    parts = []
+    size = 300
+    mv.add_square_shadow(parts, "[cur]", size, 0, 0, 30, "x")
+    sigma = max(4, int(round(size * 0.035)))
+    pad = max(sigma * 3, int(round(size * 0.10)))
+    assert pad >= sigma * 3
+    canvas_line = parts[0]
+    assert f"s={size + pad * 2}x{size + pad * 2}" in canvas_line
+
+
+def test_add_square_shadow_unique_labels_avoid_collisions():
+    parts = []
+    mv.add_square_shadow(parts, "[cur]", 300, 0, 0, 30, "lp")
+    mv.add_square_shadow(parts, "[cur]", 300, 0, 0, 30, "tr")
+    joined = ";".join(parts)
+    assert "shsrc_lp" in joined and "shsrc_tr" in joined
+    assert "vsh_lp" in joined and "vsh_tr" in joined
+
+
+def test_lp_vinyl_and_text_ring_branches_apply_cover_shadow_before_overlay():
+    """레코드 모드의 정사각 커버(lp_vinyl/text_ring) 는 실제 커버를 올리기 전에
+    add_square_shadow() 로 섀도우를 먼저 합성해야 한다(classic 은 원형 마스킹에
+    이미 자체 엣지 처리가 있어 범위 밖 — 이 테스트는 정사각 커버 두 테마만 확인)."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    lp_branch = render_src.split(
+        'elif disc_theme == "lp_vinyl" and vinyl_png and cover_png:')[1].split(
+        'elif disc_theme == "text_ring"')[0]
+    assert "add_square_shadow(" in lp_branch
+    assert lp_branch.index("add_square_shadow(") < lp_branch.index("[coverfg]")
+
+    text_ring_branch = render_src.split('elif disc_theme == "text_ring"')[1].split(
+        "# 자막 burn-in")[0]
+    assert "add_square_shadow(" in text_ring_branch
+    assert text_ring_branch.index("add_square_shadow(") < text_ring_branch.index("[coverfg]")
+
+
+# ---------- 진행바 손잡이(handle) ----------
+
+def test_progress_bar_block_draws_time_driven_circular_handle():
+    """진행바 필과 별개로, 재생 위치에 원형 손잡이가 t/duration 비율로 슬라이드
+    해야 한다(레퍼런스 sample/playlist_sample1.png 실측: 손잡이 지름 ≈ 트랙
+    높이의 2배, 흰색, overlay eval=frame 로 매 프레임 위치 갱신)."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    pb_block = render_src.split("if progress_bar and duration:")[1].split(
+        "outro_cta and duration")[0]
+    assert "pbhandle" in pb_block
+    assert "eval=frame" in pb_block
+    assert "bar_h * 2.0" in pb_block
+    # 핸들은 필의 색(accent)이 아니라 트랙과 같은 흰색이어야 한다(핸들 캔버스
+    # 생성부는 color=c=white 로 시작해 [pbhandle] 라벨로 끝나는 하나의 f-string
+    # 체인 — 소스상 여러 줄로 나뉘므로 개행/공백을 제거하고, [pbhandle] 라벨
+    # 바로 앞쪽 구간에서 가장 가까운 color=c=white 를 찾아 accent 가 없는지 본다).
+    collapsed = pb_block.replace("\n", "").replace(" ", "")
+    handle_pos = collapsed.index("[pbhandle]")
+    preceding = collapsed[:handle_pos]
+    handle_src_start = preceding.rindex("color=c=white")
+    handle_src_region = collapsed[handle_src_start:handle_pos]
+    assert "accent" not in handle_src_region
+
+
+def test_progress_bar_handle_diameter_matches_measured_ratio():
+    # 순수 함수 조합으로 실제 render() 와 동일한 계산을 재현해 손잡이 지름이
+    # bar_h 의 정수배(≈2.0)가 되는지 확인.
+    W, H = 1920, 1080
+    margin_x, bar_w, bar_h, pb_y = mv.progress_bar_geometry(W, H, 1.0, "bottom")
+    handle_d = max(bar_h + 2, int(round(bar_h * 2.0)))
+    assert handle_d == round(bar_h * 2.0)
+    assert handle_d > bar_h  # 트랙보다 뚜렷하게 커야 손잡이로 보인다
+
+
+# ---------- 제목/아티스트 캡션 글자 크기 (title_caption_geometry) ----------
+
+def test_title_caption_geometry_font_sizes_match_reference_ratios():
+    # 레퍼런스(sample/playlist_sample1.png) 실측: 제목/아티스트 바운딩박스
+    # 높이 비율 ≈48:27(≈1.78), 제목-상단→아티스트-상단 간격/제목폰트 ≈1.3배.
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        True, D=400, cy=324, H=1080, scale=1.0)
+    assert ttl_fs == 62
+    assert art_fs == 35
+    assert art_gap == int(round(ttl_fs * 1.3))
+    # 기존(52/30) 대비 눈에 띄게 커져 레퍼런스처럼 굵고 큰 타이틀이 되어야 한다
+    assert ttl_fs > 52 and art_fs > 30

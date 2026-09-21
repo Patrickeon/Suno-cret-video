@@ -746,11 +746,40 @@ def disc_diameter(lay):
     return d - (d % 2)
 
 
+# lp_vinyl/text_ring 테마 치수·오프셋. PNG 프리패스 생성(main)과 filter_complex
+# 오버레이 배치(render) 양쪽에서 같은 값을 참조해야 크기가 어긋나지 않는다.
+# 디자인 레퍼런스(sample/palylist_sample2.png)를 원 피팅(circle fit)으로 실측하면
+# 비닐이 커버보다 오히려 작고(지름 ≈0.90×D) 커버 중심에서 오른쪽으로 ≈0.51×D
+# 떨어져 있다 — 초기에 눈대중으로 잡았던 1.3/0.40 은 컸다(LP_VINYL_SIZE_SCALE 적용
+# 후 비닐이 화면 위로 잘려나가는 걸로 드러남). 실측치로 교체.
+LP_VINYL_SCALE = 0.90      # 비닐 지름 = D * 이 값
+LP_VINYL_OFFSET = 0.51     # 커버 중심 기준 오른쪽으로 삐져나오는 양(D 배수)
+TEXT_RING_SCALE = 1.15     # 텍스트 링 지름 = D * 이 값 (커버에 가깝게 → 위아래 노출 최소화)
+TEXT_RING_OFFSET = 0.30    # 커버 중심 기준 왼쪽으로 밀어 초승달 형태로 노출(D 배수)
+
+# lp_vinyl 전용 확대 배율. disc_diameter() 는 모든 디스크 테마가 공유하는 함수라
+# (classic/text_ring/square_spin 이 그대로 의존) 여기서 바꾸면 안 되지만, 디자인
+# 레퍼런스(sample/palylist_sample2.png)를 PIL 로 실측하면 커버 높이/프레임 높이
+# ≈0.64 인 반면 disc_diameter() 가 가로형에 주는 값은 ≈0.42 로 눈에 띄게 작다.
+# 그래서 lp_vinyl 테마에서만 disc_diameter() 의 결과(D)에 이 배율을 곱해 커버/비닐
+# PNG 를 더 크게 생성한다 — 다른 테마의 D 는 이 상수와 무관, 전혀 영향받지 않는다.
+LP_VINYL_SIZE_SCALE = 1.5
+
+
+# 진행바 폭 = 프레임 폭의 이 비율(가운데 정렬). 디자인 레퍼런스
+# (sample/playlist_sample1.png)를 PIL 로 실측하면 bar_width/image_width ≈0.26 인
+# 알약형 바가 화면 중앙에 떠 있는 구도다 — 예전 공식(margin_x=70px 고정)은 여백이
+# 해상도와 무관한 절대 픽셀값이라 1080p 기준 bar_w/W ≈0.93(거의 풀폭)까지 벌어져
+# 레퍼런스보다 훨씬 넓었다. margin_x 를 W 에 비례시켜야 어떤 해상도/scale 에서도
+# 비율이 유지된다.
+PROGRESS_BAR_WIDTH_FRAC = 0.27
+
+
 def progress_bar_geometry(W, H, scale=1.0, pos="bottom"):
     """곡 진행바 트랙의 좌우 여백/크기/y 좌표 (순수 함수, top/bottom 공용).
-    좌우에 여백을 둬야 둥근 캡이 화면 밖으로 잘리지 않고 보인다.
+    바 폭은 PROGRESS_BAR_WIDTH_FRAC 비율로 가운데 정렬(레퍼런스 샘플 실측 기반).
     반환: (margin_x, bar_w, bar_h, y)."""
-    margin_x = int(round(70 * scale))
+    margin_x = int(round(W * (1 - PROGRESS_BAR_WIDTH_FRAC) / 2))
     bar_w = max(10, W - margin_x * 2)
     bar_h = max(8, int(round(10 * scale)))
     if pos == "top":
@@ -780,19 +809,120 @@ def pill_alpha_expr(w, h, opacity, fill_expr=None):
     return f"{amp}*lte(X,{fill_expr})*lte({dist},{r:.2f})"
 
 
-def title_caption_geometry(disc_active, D, cy, H, scale=1.0):
+def subtitle_zone_y(lay, sub_pos="bottom", sub_size=1.0):
+    """write_ass() 의 Alignment/MarginV 해석과 맞춰, 자막이 실제 화면에서 차지할
+    y 범위(1줄 기준 근사치)를 (zone_top, zone_bottom) 으로 추정하는 순수 함수.
+    실제 가사(cues)가 있는지와 무관하게 '레이아웃상 자막에 예약된 영역'으로
+    취급한다 — margin_v 자체가 이미 cue 유무와 무관한 레이아웃 상수이기 때문.
+    title_caption_geometry() 가 캡션이 이 영역과 겹치지 않게 배치하는 데 쓴다."""
+    H = lay["H"]
+    fontsize = max(1, int(round(lay["font_size"] * float(sub_size))))
+    line_h = int(round(fontsize * 1.2))
+    if sub_pos == "top":
+        zone_top = int(H * 0.08)
+        zone_bottom = zone_top + line_h
+    elif sub_pos == "middle":
+        zone_top = H // 2 - line_h // 2
+        zone_bottom = H // 2 + line_h // 2
+    else:  # "bottom" (기본) — Alignment=2, MarginV 는 화면 하단에서 잰다
+        zone_bottom = H - lay["margin_v"]
+        zone_top = zone_bottom - line_h
+    return zone_top, zone_bottom
+
+
+def title_caption_geometry(disc_active, D, cy, H, scale=1.0, pos="auto", sub_zone=None):
     """상시 제목/아티스트 캡션의 글자 크기/y 좌표 (순수 함수).
-    디스크 모드면 디스크 바로 아래(인트로 카드와 같은 크기 감각), 디스크가
-    꺼져 있으면 화면 상단(기본 위치인 하단 자막과 겹치지 않도록).
-    반환: (title_fontsize, artist_fontsize, title_y, artist_y_gap)."""
-    ttl_fs = int(round(52 * scale))
-    art_fs = int(round(30 * scale))
-    if disc_active:
-        ttl_y = cy + D // 2 + int(round(26 * scale))
+    pos="auto"(기본): 디스크 모드면 디스크 바로 아래(인트로 카드와 같은 크기 감각),
+    디스크가 꺼져 있으면 화면 상단(기본 위치인 하단 자막과 겹치지 않도록).
+    pos="top": 디스크 활성 여부와 무관하게 항상 화면 상단(레퍼런스 lp_vinyl 샘플처럼
+    디스크 위에 캡션을 두는 구도용).
+    sub_zone: subtitle_zone_y() 가 반환하는 (zone_top, zone_bottom). disc 바로 아래
+    자리(auto)가 이 구간과 겹치면, 디스크와 자막 사이 틈에 억지로 끼워 넣는 대신
+    자막 영역보다 아래로 캡션을 내려 자막·캡션이 항상 분리되게 한다(디스크 크기와
+    무관하게 항상 성립하는 결정론적 지오메트리 — 매직 오프셋이 아니다).
+    반환: (title_fontsize, artist_fontsize, title_y, artist_y_gap).
+
+    글자 크기/줄간격/여백은 디자인 레퍼런스(sample/playlist_sample1.png, 1433x843)를
+    PIL 로 실측한 값 기반이다:
+      - 커버 정사각형 경계: x≈542~889, y≈218~564 (한 변 D_ref≈346px, gradient/edge
+        검출로 4변 모두 확인)
+      - 제목("My Friend") 글자 바운딩박스: y≈622~670 (높이 48px)
+      - 아티스트("Mark Lee (마크리)") 글자 바운딩박스: y≈686~713 (높이 27px)
+      - 제목 상단 -> 아티스트 상단 간격: 64px
+      - 커버 하단(564) -> 제목 상단(622) 간격: 58px
+    D_ref 대비 비율로 바꾸면 title_fs/D≈0.137, artist_fs/D≈0.077, art_gap/D≈0.183,
+    cover_gap/D≈0.17 — 기존 상수(52/30, gap=ttl_fs*1.05, margin=26*scale 고정)는
+    1080p 환산 D_ref(H*0.42≈453.6)에 대해 각각 ≈0.114/0.066/1.05배/≈0.057 밖에
+    안 돼 레퍼런스보다 작고 촘촘하다. 아래 상수를 실측 비율에 맞춰 키운다."""
+    ttl_fs = int(round(62 * scale))
+    art_fs = int(round(35 * scale))
+    if pos == "top":
+        ttl_y = int(round(40 * scale))
+    elif disc_active:
+        # 커버 하단 -> 캡션 여백 = D 의 ≈0.17배(레퍼런스 실측: 58px / D_ref 346px).
+        # 고정 픽셀(구 26*scale)이 아니라 D 비례라야 해상도/커버 크기가 달라져도
+        # 레퍼런스와 같은 '뚜렷한 틈' 느낌이 유지된다.
+        ttl_y = cy + D // 2 + int(round(D * 0.17))
     else:
         ttl_y = int(round(40 * scale))
-    art_gap = int(round(ttl_fs * 1.05))
+    art_gap = int(round(ttl_fs * 1.3))
+
+    if pos == "auto" and disc_active and sub_zone is not None:
+        sub_top, sub_bottom = sub_zone
+        gap = int(round(16 * scale))
+        cap_bottom = ttl_y + art_gap + art_fs
+        overlaps = (ttl_y - gap) < sub_bottom and (cap_bottom + gap) > sub_top
+        if overlaps:
+            ttl_y = sub_bottom + gap
+
     return ttl_fs, art_fs, ttl_y, art_gap
+
+
+def add_square_shadow(parts, cur, size, x, y, fps, label):
+    """정사각 커버(cover_png) 뒤에 깔 소프트 드롭섀도우 (lp_vinyl/text_ring 전용).
+
+    디자인 레퍼런스(sample/playlist_sample1.png)를 PIL 로 실측: 커버 하단 바로
+    바깥은 상단보다 뚜렷하게 어둡고(위: 89 vs 91, 거의 무차이 / 아래: 67 vs
+    100px 더 아래 192, 뚜렷한 낙차), 좌우는 그 중간(좌 128->140, 우 58->63).
+    배경이 복잡한 보케 사진이라 100px 낙차 자체를 그대로 재현하면(D 대비
+    ≈29%) '은은한 드롭섀도우'가 아니라 비네트에 가까워지므로, 절대 낙차폭이
+    아니라 '위쪽은 거의 안 보이고 아래쪽만 뚜렷이 보인다'는 방향성만 취한다.
+
+    처음 버전은 offset_y 를 size 의 2.5%(고정 비율)로만 살짝 내렸는데, pad
+    (블러 캔버스 여유폭)가 sigma 의 ~1.6배뿐이라 gblur 가 캔버스 경계에서
+    잘려(하드 클립) 위/아래 모두 15~20px 만에 사라지는 버그가 있었다 —
+    렌더 결과(f5_flat.png)를 같은 방식으로 실측해 발견. 고쳐야 할 두 가지:
+      1) pad 를 sigma 의 배수(3배)로 잡아 gblur 가 캔버스 밖에서 잘리지
+         않고 자연스러운 가우시안 낙차를 다 그릴 수 있게 한다.
+      2) offset_y = pad 로 두면(고정 비율이 아니라 pad 그 자체) 섀도우
+         사각형의 흐려진 윗부분이 정확히 커버 뒤로 완전히 숨고(위쪽 노출
+         ≈0, 레퍼런스의 '위 89 vs 91 무차이'와 정확히 대응), 아랫부분은
+         2*pad 만큼 고스란히 드러난다(레퍼런스의 '아래쪽만 뚜렷' 대응) —
+         매직 넘버가 아니라 pad 자체의 기하학적 성질에서 오프셋이 정해진다.
+
+    정사각 커버라 실제 알파 마스크가 필요 없으므로(make_disc_png 처럼
+    원형이 아님) color+geq 로 사각 알파를 굽고 gblur 로 가장자리를 부드럽게
+    편 뒤, 실제 커버보다 먼저(밑에) 합성한다.
+
+    size: 커버 한 변(px, 이미 D/D_lp 등 최종 렌더 크기). x, y: 커버가 실제
+    overlay 되는 좌상단 좌표. fps: 프레임레이트(color 소스용). label: 파이프라인
+    라벨 충돌을 피하기 위한 접미사(테마별로 다르게 호출).
+    반환: 섀도우가 합성된 새 파이프라인 라벨(다음 오버레이의 입력으로 사용)."""
+    sigma = max(4, int(round(size * 0.035)))    # 블러 반경 (레퍼런스: 완만한 낙차)
+    pad = max(sigma * 3, int(round(size * 0.10)))  # gblur 가 캔버스 밖에서 안 잘릴 여유
+    offset_y = pad                              # 위=커버 뒤로 완전히 숨음, 아래=2*pad 노출
+    opacity = 0.45
+    canvas = size + pad * 2
+    amp = int(round(255 * opacity))
+    a_expr = f"{amp}*between(X,{pad},{pad + size - 1})*between(Y,{pad},{pad + size - 1})"
+    parts.append(
+        f"color=c=black:s={canvas}x{canvas}:r={fps},format=gbrap,"
+        f"geq=r=0:g=0:b=0:a='{a_expr}',gblur=sigma={sigma}[shsrc_{label}]")
+    sx = x - pad
+    sy = y - pad + offset_y
+    out_label = f"[vsh_{label}]"
+    parts.append(f"{cur}[shsrc_{label}]overlay={sx}:{sy}{out_label}")
+    return out_label
 
 
 def make_disc_png(src, out_path, size):
@@ -827,36 +957,128 @@ def make_square_png(src, out_path, size):
         sys.exit("레코드 모드(lp_vinyl/text_ring): 앨범아트 정사각 크롭 실패")
 
 
-def make_vinyl_png(out_path, size, accent_hex):
-    """검은 바이닐(LP) 텍스처 PNG (프리패스, 1프레임, 순수 geq — 추가 의존성 없음).
+def make_default_cover_png(out_path, size, accent_hex):
+    """레코드 모드용 앨범아트가 전혀 없을 때(--disc-art 도 --bg 도 없음) 대신 쓰는
+    기본 커버: 그라데이션(배경의 gradients 소스와 동일 패턴) + ♪ 아이콘. Pillow 등
+    추가 의존성 없이 순수 ffmpeg(gradients lavfi + symbol_font_spec 의 drawtext)만
+    사용 — make_disc_png/make_square_png 가 다른 --disc-art 처럼 그대로 크롭·
+    마스킹할 수 있도록 '이미지 파일'로 생성해 둔다."""
+    D = size - (size % 2)
+    c0 = norm_hex(accent_hex, DEFAULT_VIZ_COLORS[0])
+    c1 = norm_hex(DEFAULT_VIZ_COLORS[1], DEFAULT_VIZ_COLORS[1])
+    fs = int(D * 0.42)
+    vf = (f"drawtext={symbol_font_spec()}:text='♪':fontcolor=white@0.8:"
+          f"fontsize={fs}:x=(w-tw)/2:y=(h-th)/2")
+    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+           "-i", f"gradients=s={D}x{D}:c0=0x{c0}:c1=0x{c1}:nb_colors=2",
+           "-vf", vf, "-frames:v", "1", os.path.abspath(out_path)]
+    if run(cmd).returncode != 0:
+        sys.exit("레코드 모드: 기본 커버(앨범아트 없음) 생성 실패")
+
+
+def make_vinyl_png(out_path, size, accent_hex, art_src=None):
+    """검은 바이닐(LP) 텍스처 PNG (프리패스, 1프레임 — 추가 의존성 없음).
     동심원 그루브(radius-distance 사인 변조, make_disc_png 의 hypot 링 패턴과
-    radial 헤일로의 a_expr 패턴을 재사용)와 중앙 라벨 원, 스핀들 홀을 그리고
-    바깥 가장자리는 make_disc_png 와 동일한 소프트 알파 낙차로 마감한다."""
+    radial 헤일로의 a_expr 패턴을 재사용)와 중앙 라벨 원, 스핀들 홀을 그린다.
+    바깥 가장자리는 make_disc_png 와 동일한 소프트 알파 낙차로 마감한다.
+
+    art_src: 주어지면(레퍼런스 sample/palylist_sample2.png 처럼) 라벨 자리를 flat
+    accent 색이 아니라 실제 앨범아트를 원형으로 크롭한 이미지로 채운다 — 비닐
+    PNG 전체가 rotate 로 통째로 회전하므로 라벨 속 아트도 자연히 비닐과 같이
+    돈다(요청사항 그 자체). art_src 가 없으면(폴백) 기존처럼 flat accent 색."""
     D = size - (size % 2)
     c = (D - 1) / 2
     R = D / 2 - 2                      # 소프트 엣지 여유 (make_disc_png 와 동일 패턴)
     label_r = D * 0.22                 # 중앙 라벨(스티커) 반지름
     hole_r = max(3.0, D * 0.035)       # 스핀들 홀 반지름
-    accent = norm_hex(accent_hex, DEFAULT_VIZ_COLORS[0])
-    ar, ag, ab = int(accent[0:2], 16), int(accent[2:4], 16), int(accent[4:6], 16)
     dist = f"hypot(X-{c:.1f},Y-{c:.1f})"
     # 동심원 그루브: 반지름 거리에 따라 명암이 주기적으로 흔들리는 회색조 링들
     groove = f"(22+14*sin({dist}*1.05))"
     in_hole = f"lt({dist},{hole_r:.1f})"
-    in_label = f"lt({dist},{label_r:.1f})"
-    r_expr = f"if({in_hole},6,if({in_label},{ar},{groove}))"
-    g_expr = f"if({in_hole},6,if({in_label},{ag},{groove}))"
-    b_expr = f"if({in_hole},6,if({in_label},{ab},{groove}))"
     a_expr = f"255*clip(({R:.1f}-{dist})/2+1,0,1)"
-    vf = (
-        f"format=gbrap,"
-        f"geq=r='{r_expr}':g='{g_expr}':b='{b_expr}':a='{a_expr}'"
-    )
-    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-           "-i", f"color=c=black:s={D}x{D}:r=1",
-           "-vf", vf, "-frames:v", "1", os.path.abspath(out_path)]
-    if run(cmd).returncode != 0:
-        sys.exit("레코드 모드(lp_vinyl): 비닐 텍스처 생성 실패")
+
+    if not art_src or not os.path.exists(art_src):
+        # 폴백: 아트가 없으면 기존처럼 라벨을 flat accent 색으로 채운다.
+        accent = norm_hex(accent_hex, DEFAULT_VIZ_COLORS[0])
+        ar, ag, ab = int(accent[0:2], 16), int(accent[2:4], 16), int(accent[4:6], 16)
+        in_label = f"lt({dist},{label_r:.1f})"
+        r_expr = f"if({in_hole},6,if({in_label},{ar},{groove}))"
+        g_expr = f"if({in_hole},6,if({in_label},{ag},{groove}))"
+        b_expr = f"if({in_hole},6,if({in_label},{ab},{groove}))"
+        vf = (f"format=gbrap,"
+              f"geq=r='{r_expr}':g='{g_expr}':b='{b_expr}':a='{a_expr}'")
+        cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+               "-i", f"color=c=black:s={D}x{D}:r=1",
+               "-vf", vf, "-frames:v", "1", os.path.abspath(out_path)]
+        if run(cmd).returncode != 0:
+            sys.exit("레코드 모드(lp_vinyl): 비닐 텍스처 생성 실패")
+        return
+
+    # ---- art_src 있음: 그루브 베이스 -> 라벨 자리에 원형 크롭 아트 오버레이 ->
+    #      스핀들 홀을 마지막에 다시 뚫는 3단 프리패스 ----
+    out_abs = os.path.abspath(out_path)
+    out_dir = os.path.dirname(out_abs) or "."
+    stem = os.path.splitext(os.path.basename(out_abs))[0]
+    base_tmp = os.path.join(out_dir, f"_{stem}_base.png")
+    label_tmp = os.path.join(out_dir, f"_{stem}_label.png")
+    combined_tmp = os.path.join(out_dir, f"_{stem}_combo.png")
+    try:
+        # 1) 그루브만 있는 베이스(라벨/홀 구분 없이 전면 그루브 — 라벨 위에도
+        #    이음매 없이 이어지다가 아트로 완전히 덮인다)
+        base_vf = (f"format=gbrap,"
+                   f"geq=r='{groove}':g='{groove}':b='{groove}':a='{a_expr}'")
+        cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+               "-i", f"color=c=black:s={D}x{D}:r=1",
+               "-vf", base_vf, "-frames:v", "1", base_tmp]
+        if run(cmd).returncode != 0:
+            sys.exit("레코드 모드(lp_vinyl): 비닐 그루브 베이스 생성 실패")
+
+        # 2) 라벨 자리를 채울 원형 크롭 아트 (make_disc_png 와 동일한 소프트
+        #    엣지 원형 마스킹 패턴, 링 없이 단순 원)
+        label_d = max(8, int(round(label_r * 2)))
+        label_d -= label_d % 2
+        lc = (label_d - 1) / 2
+        lR = label_d / 2 - 1
+        label_a_expr = f"255*clip(({lR:.1f}-hypot(X-{lc:.1f},Y-{lc:.1f}))/2+1,0,1)"
+        label_vf = (
+            f"scale={label_d}:{label_d}:force_original_aspect_ratio=increase,"
+            f"crop={label_d}:{label_d},format=gbrap,"
+            f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{label_a_expr}'"
+        )
+        cmd = ["ffmpeg", "-y", "-v", "error", "-i", os.path.abspath(art_src),
+               "-vf", label_vf, "-frames:v", "1", label_tmp]
+        if run(cmd).returncode != 0:
+            sys.exit("레코드 모드(lp_vinyl): 라벨 아트 크롭 실패")
+
+        # 3) 라벨 아트를 그루브 베이스 중앙에 합성
+        off = (D - label_d) // 2
+        cmd = ["ffmpeg", "-y", "-v", "error",
+               "-i", base_tmp, "-i", label_tmp,
+               "-filter_complex", f"[0:v][1:v]overlay={off}:{off}:format=auto",
+               "-frames:v", "1", combined_tmp]
+        if run(cmd).returncode != 0:
+            sys.exit("레코드 모드(lp_vinyl): 라벨 아트 합성 실패")
+
+        # 4) 스핀들 홀은 아트 위에서도 항상 보여야 하므로 마지막에 다시 뚫는다
+        #    (r(X,Y)/g(X,Y)/b(X,Y)/alpha(X,Y) 로 나머지 영역은 그대로 통과시키는
+        #    패턴은 make_disc_png 의 ring 오버레이 트릭과 동일 — 참고: geq 에서
+        #    알파 평면 교차 참조 함수명은 'a(X,Y)'가 아니라 'alpha(X,Y)'다) ----
+        hole_vf = (
+            f"format=gbrap,"
+            f"geq=r='if({in_hole},6,r(X,Y))':g='if({in_hole},6,g(X,Y))':"
+            f"b='if({in_hole},6,b(X,Y))':a='if({in_hole},255,alpha(X,Y))'"
+        )
+        cmd = ["ffmpeg", "-y", "-v", "error", "-i", combined_tmp,
+               "-vf", hole_vf, "-frames:v", "1", out_abs]
+        if run(cmd).returncode != 0:
+            sys.exit("레코드 모드(lp_vinyl): 스핀들 홀 생성 실패")
+    finally:
+        for tmp in (base_tmp, label_tmp, combined_tmp):
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
 
 
 _DEFAULT_RING_PHRASE = "MUSIC EVERYWHERE - "
@@ -989,7 +1211,8 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            sparkle=False, outro_cta=False, outro_cta_text="",
            disc_bg_style="off", disc_theme="classic", disc_ring_text=None,
            cover_png=None, vinyl_png=None, ring_png=None,
-           title_caption=False, cap_title="", cap_artist=""):
+           title_caption=False, cap_title="", cap_artist="",
+           title_caption_pos="auto", sub_pos="bottom", sub_size=1.0):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
@@ -1131,6 +1354,17 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
             #      회전 시 모서리가 D×D 캔버스에 잘려 팔각형처럼 보임). classic 은
             #      원형이라 회전에 불변 — 캔버스가 그대로 D 여야 기존 동작과 100%
             #      동일하다(하위 호환 필수) ----
+            #      add_square_shadow() 는 여기(classic/square_spin) 에는 일부러
+            #      안 붙인다. classic 은 make_disc_png 의 흰 링 테두리+소프트 알파
+            #      낙차가 이미 배경과의 분리 역할을 한다(렌더 확인:
+            #      f4_classic.png, 별도 그림자 없이도 배경과 뚜렷이 분리됨).
+            #      square_spin 은 실제로 임의 각도까지 계속 회전하는 정사각형이라
+            #      (렌더 확인: f9_ss_a/b.png, 마름모 형태로 자유 회전) 축 정렬
+            #      정사각 그림자를 그대로 붙이면 45도 부근에서 그림자 상자
+            #      모서리가 회전한 커버의 대각선 밖으로 삐져나와 어긋나 보인다 —
+            #      제대로 하려면 그림자도 같은 rotate_expr 로 동기 회전시켜야
+            #      하는데, 이는 이번 네 가지 폴리시 항목(표시부만 다룸) 범위를
+            #      넘는 별도 작업이라 이번 패치에서는 다루지 않는다.
             disc_idx = audio_idx + 1 + (1 if logo else 0)
             if disc_theme == "square_spin":
                 RD = int(math.ceil(D * math.sqrt(2)))
@@ -1145,44 +1379,57 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
             parts.append(f"{cur}[disc]overlay={(W - RD) // 2}:{cy - RD // 2}[vdisc]")
             cur = "[vdisc]"
         elif disc_theme == "lp_vinyl" and vinyl_png and cover_png:
-            # ---- lp_vinyl: 회전하는 비닐(1.3x, 한쪽으로 살짝 오프셋) 뒤에
-            #      정적 정사각 커버를 classic 과 동일한 앵커에 겹친다 ----
+            # ---- lp_vinyl: 회전하는 비닐(LP_VINYL_SCALE 배) 뒤에 정적 정사각
+            #      커버를 classic 과 동일한 앵커에 겹친다. 디자인 레퍼런스처럼
+            #      한쪽(오른쪽)으로 크게 삐져나오는 비대칭 구도(LP_VINYL_OFFSET) ----
+            #      D_lp = LP_VINYL_SIZE_SCALE 배 확대된 커버 지름. main() 프리패스가
+            #      cover_png/vinyl_png 를 정확히 이 크기로 구웠으므로 오버레이 좌표도
+            #      전부 D_lp 기준이어야 한다(D 를 쓰면 실제 PNG 크기와 어긋남) ----
+            D_lp = int(D * LP_VINYL_SIZE_SCALE)
+            D_lp -= D_lp % 2
             base_idx = audio_idx + 1 + (1 if logo else 0)   # vinyl_png 입력
             cover_idx = base_idx + 1                        # cover_png 입력
-            VD = int(D * 1.3)
+            VD = int(D_lp * LP_VINYL_SCALE)
             VD -= VD % 2
-            off_x = int(D * 0.13)  # 커버 뒤에서 오른쪽으로 살짝 비져나오게
+            off_x = int(D_lp * LP_VINYL_OFFSET)  # 커버 뒤에서 오른쪽으로 크게 비져나오게
             rotate_expr = f"rotate=2*PI*t/16:ow={VD}:oh={VD}:c=black@0"
             if rotate_eval_flag():
                 rotate_expr += ":eval=frame"
             parts.append(
                 f"[{base_idx}:v]format=rgba,{rotate_expr},fps={FPS}[vinylrot]")
-            cover_cx = (W - D) // 2 + D // 2  # 커버(=classic 디스크)의 중심 x
+            cover_cx = (W - D_lp) // 2 + D_lp // 2  # 커버(=classic 디스크)의 중심 x
             vx = cover_cx + off_x - VD // 2
             vy = cy - VD // 2
             parts.append(f"{cur}[vinylrot]overlay={vx}:{vy}[vvinyl]")
             cur = "[vvinyl]"
+            cov_x, cov_y = (W - D_lp) // 2, cy - D_lp // 2
+            cur = add_square_shadow(parts, cur, D_lp, cov_x, cov_y, FPS, "lp")
             parts.append(f"[{cover_idx}:v]format=rgba[coverfg]")
-            parts.append(f"{cur}[coverfg]overlay={(W - D) // 2}:{cy - D // 2}[vdisc]")
+            parts.append(f"{cur}[coverfg]overlay={cov_x}:{cov_y}[vdisc]")
             cur = "[vdisc]"
         elif disc_theme == "text_ring" and ring_png and cover_png:
-            # ---- text_ring: 회전하는 텍스트 링(1.4x, 커버와 동심원) + 정적 커버 ----
+            # ---- text_ring: 회전하는 텍스트 링(TEXT_RING_SCALE 배) + 정적 커버.
+            #      디자인 레퍼런스처럼 커버 중심에서 왼쪽으로 밀어(TEXT_RING_OFFSET)
+            #      대부분 커버 뒤에 가려지고 왼쪽에 초승달 모양으로만 노출되게 ----
             base_idx = audio_idx + 1 + (1 if logo else 0)   # ring_png 입력
             cover_idx = base_idx + 1                        # cover_png 입력
-            RD = int(D * 1.4)
+            RD = int(D * TEXT_RING_SCALE)
             RD -= RD % 2
+            off_x = int(D * TEXT_RING_OFFSET)  # 커버 뒤에서 왼쪽으로 밀어 초승달 노출
             rotate_expr = f"rotate=2*PI*t/16:ow={RD}:oh={RD}:c=black@0"
             if rotate_eval_flag():
                 rotate_expr += ":eval=frame"
             parts.append(
                 f"[{base_idx}:v]format=rgba,{rotate_expr},fps={FPS}[ringrot]")
             cover_cx = (W - D) // 2 + D // 2
-            rx = cover_cx - RD // 2
+            rx = cover_cx - off_x - RD // 2
             ry = cy - RD // 2
             parts.append(f"{cur}[ringrot]overlay={rx}:{ry}[vring]")
             cur = "[vring]"
+            cov_x, cov_y = (W - D) // 2, cy - D // 2
+            cur = add_square_shadow(parts, cur, D, cov_x, cov_y, FPS, "tr")
             parts.append(f"[{cover_idx}:v]format=rgba[coverfg]")
-            parts.append(f"{cur}[coverfg]overlay={(W - D) // 2}:{cy - D // 2}[vdisc]")
+            parts.append(f"{cur}[coverfg]overlay={cov_x}:{cov_y}[vdisc]")
             cur = "[vdisc]"
 
     # 자막 burn-in (동봉 fonts/ 를 fontsdir 로 등록)
@@ -1229,9 +1476,10 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     # --title/--artist 는 썸네일 등 다른 용도로도 쓰이므로, 이 오버레이는 명시적
     # opt-in(--title-caption)일 때만 그린다 — 자동으로 켜지지 않는다.
     if title_caption and (cap_title or cap_artist):
+        sub_zone = subtitle_zone_y(lay, sub_pos=sub_pos, sub_size=sub_size)
         ttl_fs, art_fs, ttl_y, art_gap = title_caption_geometry(
             disc_active, D if disc_active else 0, cy if disc_active else 0,
-            H, scale)
+            H, scale, pos=title_caption_pos, sub_zone=sub_zone)
         cap_y = ttl_y
         if cap_title:
             write_textfile(cap_title, os.path.join(work_dir, "_cap_ttl.txt"))
@@ -1282,6 +1530,29 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
             f"geq=r={ar}:g={ag}:b={ab}:a='{fill_a}'[pbfill]")
         parts.append(f"{cur}[pbfill]overlay={margin_x}:{pb_y}[vpb]")
         cur = "[vpb]"
+
+        # ---- 진행 위치 손잡이(핸들): 필 경계에 얹히는 원형 점 ----
+        # 레퍼런스(sample/playlist_sample1.png)를 PIL 로 실측: 트랙 자체는 세로로
+        # 9px(y 124~132)인데, 재생 위치의 원형 점은 같은 x 열에서 세로로 18px
+        # (y 119~137)까지 튀어나와 있다 — 트랙 높이 대비 지름 비율 ≈2.0, 색은
+        # 트랙과 같은 흰색(채움 색인 accent 가 아님). pill_alpha_expr 을 fill_expr
+        # 없이 정사각 캔버스(handle_d x handle_d)에 쓰면 hypot 클램프가 자동으로
+        # w==h 인 원(반지름=h/2)이 되므로 새 헬퍼 없이 재사용 가능.
+        # 위치는 필과 같은 T(=재생 경과초)/duration 비율을 오버레이 x 표현식에
+        # 그대로 옮겨(overlay 는 소문자 t, eval=frame 필요) 매 프레임 슬라이드
+        # 시킨다 — 필 자체를 overlay-x 슬라이드로 그리지 않는 이유(위 주석, 여백
+        # 누수 문제)는 작은 별도 원 에셋인 핸들에는 해당하지 않는다.
+        handle_d = max(bar_h + 2, int(round(bar_h * 2.0)))
+        handle_a = pill_alpha_expr(handle_d, handle_d, 1.0)
+        handle_y = pb_y + bar_h // 2 - handle_d // 2
+        handle_x_expr = f"{margin_x}+{bar_w}*clip(t/{duration:.3f},0,1)-{handle_d}/2"
+        parts.append(
+            f"color=c=white:s={handle_d}x{handle_d}:r={FPS},format=gbrap,"
+            f"geq=r=255:g=255:b=255:a='{handle_a}'[pbhandle]")
+        parts.append(
+            f"{cur}[pbhandle]overlay=x='{handle_x_expr}':y={handle_y}:"
+            f"eval=frame[vpbh]")
+        cur = "[vpbh]"
 
     # ---- 아웃트로 구독 유도 카드: 곡 끝 ~4초에 페이드인 ----
     if outro_cta and duration:
@@ -1466,6 +1737,9 @@ def main():
                     help="곡 제목/아티스트를 전체 재생시간 내내 고정 노출 "
                          "(--title/--artist 가 있어도 자동으로 켜지지 않음, 명시적 opt-in). "
                          "레코드 모드면 디스크 바로 아래, 아니면 화면 상단")
+    ap.add_argument("--title-caption-pos", choices=["auto", "top"], default="auto",
+                    help="--title-caption 위치: auto=레코드 모드면 디스크 바로 아래·"
+                         "아니면 화면 상단(기본), top=레코드 모드여도 항상 화면 상단")
     ap.add_argument("--interlude-note", action="store_true",
                     help="가사 없는 긴 구간(간주)에 ♪ 표시")
     ap.add_argument("--keep-ass", action="store_true")
@@ -1583,9 +1857,6 @@ def main():
               size_mult=args.sub_size, pos=args.sub_pos, karaoke=args.karaoke,
               glow=args.sub_glow, fade=args.sub_fade, preview=args.sub_preview)
 
-    # 스크림: 명시 지정 없으면 배경 이미지/영상이 있을 때 자동 on
-    scrim = args.scrim if args.scrim is not None else bool(args.bg or args.video_bg)
-
     # 레코드 모드: 테마별 프리패스 (classic=원형 마스킹, lp_vinyl/text_ring=정사각 커버 +
     # 각각 비닐/텍스트링 PNG)
     disc_png = None
@@ -1594,35 +1865,54 @@ def main():
     ring_png = None
     if args.disc:
         art = args.disc_art or (args.bg[0] if args.bg else None)
-        if art and os.path.exists(art):
-            D = disc_diameter(lay)
-            if args.disc_theme == "lp_vinyl":
-                cover_png = os.path.join(out_dir, "_cover.png")
-                vinyl_png = os.path.join(out_dir, "_vinyl.png")
-                make_square_png(art, cover_png, D)
-                VD = int(D * 1.3)
-                accent = norm_hex((args.viz_color or [None])[0], DEFAULT_VIZ_COLORS[0])
-                make_vinyl_png(vinyl_png, VD, accent)
-            elif args.disc_theme == "text_ring":
-                cover_png = os.path.join(out_dir, "_cover.png")
-                ring_png = os.path.join(out_dir, "_ring.png")
-                make_square_png(art, cover_png, D)
-                RD = int(D * 1.4)
-                ring_text = args.disc_ring_text or default_ring_text(args.title, args.artist)
-                font_path = bundled_font_file(SUB_FONT) or DRAW_FONTFILE
-                make_ring_text_png(ring_png, RD, ring_text, font_path)
-            elif args.disc_theme == "square_spin":
-                # square_spin: classic 과 구조가 동일(회전할 PNG 1장을 disc_png
-                # 슬롯에 넣고 render() 의 classic 분기를 그대로 재사용) —
-                # 원형 마스킹(make_disc_png) 대신 정사각 크롭만 다르다.
-                disc_png = os.path.join(out_dir, "_disc.png")
-                make_square_png(art, disc_png, D)
-            else:
-                disc_png = os.path.join(out_dir, "_disc.png")
-                make_disc_png(art, disc_png, D)
+        D = disc_diameter(lay)
+        accent = norm_hex((args.viz_color or [None])[0], DEFAULT_VIZ_COLORS[0])
+        if not art or not os.path.exists(art):
+            # 앨범아트가 전혀 없어도 레코드 모드가 그대로 동작하도록 기본 커버로
+            # 대체(그라데이션+♪). 사용자가 나중에 실제 앨범아트를 넣으면 이 대체는
+            # 자동으로 안 쓰인다(art 가 있으면 위 조건에서 걸리지 않음).
+            art = os.path.join(out_dir, "_default_cover_src.png")
+            make_default_cover_png(art, D, accent)
+            print("[info] 레코드 모드: 앨범아트가 없어 기본 커버(그라데이션+♪)로 대체")
+        if args.disc_theme == "lp_vinyl":
+            cover_png = os.path.join(out_dir, "_cover.png")
+            vinyl_png = os.path.join(out_dir, "_vinyl.png")
+            # D_lp: render() 의 lp_vinyl 오버레이 분기와 반드시 같은 공식으로
+            # 계산해야 한다(LP_VINYL_SIZE_SCALE 참고) — 어긋나면 크기가 안 맞는다.
+            D_lp = int(D * LP_VINYL_SIZE_SCALE)
+            D_lp -= D_lp % 2
+            make_square_png(art, cover_png, D_lp)
+            VD = int(D_lp * LP_VINYL_SCALE)
+            make_vinyl_png(vinyl_png, VD, accent, art_src=art)
+        elif args.disc_theme == "text_ring":
+            cover_png = os.path.join(out_dir, "_cover.png")
+            ring_png = os.path.join(out_dir, "_ring.png")
+            make_square_png(art, cover_png, D)
+            RD = int(D * TEXT_RING_SCALE)
+            ring_text = args.disc_ring_text or default_ring_text(args.title, args.artist)
+            font_path = bundled_font_file(SUB_FONT) or DRAW_FONTFILE
+            make_ring_text_png(ring_png, RD, ring_text, font_path)
+        elif args.disc_theme == "square_spin":
+            # square_spin: classic 과 구조가 동일(회전할 PNG 1장을 disc_png
+            # 슬롯에 넣고 render() 의 classic 분기를 그대로 재사용) —
+            # 원형 마스킹(make_disc_png) 대신 정사각 크롭만 다르다.
+            disc_png = os.path.join(out_dir, "_disc.png")
+            make_square_png(art, disc_png, D)
         else:
-            print("[warn] --disc 에 쓸 앨범아트가 없습니다 "
-                  "(--disc-art 또는 --bg 필요) — 레코드 모드 생략")
+            disc_png = os.path.join(out_dir, "_disc.png")
+            make_disc_png(art, disc_png, D)
+
+    # 별도 배경 이미지가 없으면(레코드 모드의 앨범아트만 있는 경우) build_bg() 는
+    # bg_list 가 비어 있어 disc_bg_style 을 무시하고 그라데이션으로 빠진다 —
+    # 레퍼런스(sample/playlist_sample1.png)처럼 앨범아트 자체를 블러 배경으로
+    # 쓰고 싶을 땐 그 art 이미지를 bg_list 대신 넣어준다.
+    bg_for_render = args.bg
+    if args.disc and not args.bg and args.disc_bg_style == "glow":
+        bg_for_render = [art]
+
+    # 스크림: 명시 지정 없으면 배경 이미지/영상이 있을 때 자동 on
+    # (레코드 모드가 앨범아트를 배경으로 대신 쓰는 경우도 포함 — bg_for_render 기준)
+    scrim = args.scrim if args.scrim is not None else bool(bg_for_render or args.video_bg)
 
     # 간주(가사 없는 긴 구간) 검출 -> ♪ 표시용 구간
     gaps = []
@@ -1641,7 +1931,7 @@ def main():
             gaps.append((cues[-1][1] + 0.3, render_dur - 0.3))
 
     render(args.audio, ass_path, args.out, lay,
-           bg_list=args.bg, viz=args.viz, bg_color=args.bg_color,
+           bg_list=bg_for_render, viz=args.viz, bg_color=args.bg_color,
            duration=render_dur, kenburns=args.kenburns,
            clip_start=clip_start, clip_len=clip_len,
            watermark=args.watermark, logo=args.logo,
@@ -1660,7 +1950,8 @@ def main():
            disc_ring_text=args.disc_ring_text,
            cover_png=cover_png, vinyl_png=vinyl_png, ring_png=ring_png,
            title_caption=args.title_caption, cap_title=args.title or "",
-           cap_artist=args.artist or "")
+           cap_artist=args.artist or "", title_caption_pos=args.title_caption_pos,
+           sub_pos=args.sub_pos, sub_size=args.sub_size)
 
     # 썸네일 (미리보기에선 생략)
     if args.title and args.preview_secs == 0:
