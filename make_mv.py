@@ -1484,7 +1484,7 @@ def make_ring_text_png(out_path, size, text, font_path):
     img = Image.new("RGBA", (D, D), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    font_size = max(12, int(D * 0.045))
+    font_size = max(12, int(D * 0.045)) + 3
     try:
         font = ImageFont.truetype(font_path, font_size) if font_path and \
             os.path.exists(font_path) else ImageFont.load_default()
