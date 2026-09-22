@@ -614,6 +614,69 @@ def test_square_spin_disc_theme_uses_square_png_not_circular_mask(tmp_path):
     assert "make_disc_png(" not in branch
 
 
+# ---------- round 7: glow 배경 모드에서 하단 스크림 자동 off ----------------------
+
+def test_scrim_auto_default_formula_source():
+    """main() 이 스크림 자동 기본값을 계산할 때 disc_bg_style=="glow" 를
+    예외로 두는지 소스 레벨로 확인한다(제품 오너 피드백: glow 배경 위에 하단
+    스크림까지 겹쳐 하단이 짙은 검은 띠로 보임 — glow 는 이미 앨범아트 블러+
+    채도업으로 배경 전체를 채우므로 스크림이 불필요하게 중복된다)."""
+    import inspect
+    src = inspect.getsource(mv.main)
+    assert 'args.disc_bg_style != "glow"' in src
+    assert "scrim = args.scrim if args.scrim is not None else scrim_auto_on" in src
+
+
+def test_scrim_auto_default_truth_table():
+    """main() 의 scrim_auto_on = bool(bg_for_render or video_bg) and
+    disc_bg_style != "glow" 공식을 순수 계산으로 재현해 진리표를 직접 검증한다
+    (소스 문자열 검사만으로는 로직 자체의 정확성을 보장할 수 없으므로 병행)."""
+    def scrim_auto_on(bg_for_render, video_bg, disc_bg_style):
+        return bool(bg_for_render or video_bg) and disc_bg_style != "glow"
+
+    # glow + 배경 있음 -> 자동 off (이번 라운드가 고치는 케이스)
+    assert scrim_auto_on(["art.jpg"], None, "glow") is False
+    # off(레코드 비활성/기본) + 배경 있음 -> 기존처럼 자동 on(회귀 없음)
+    assert scrim_auto_on(["art.jpg"], None, "off") is True
+    # radial + 배경 있음 -> 기존처럼 자동 on(회귀 없음, 이번 리포트 대상 아님)
+    assert scrim_auto_on(["art.jpg"], None, "radial") is True
+    # glow 인데 배경/비디오가 아예 없음 -> 어차피 원래도 off (스크림은 배경이
+    # 있을 때만 의미가 있으므로 글로우 여부와 무관하게 False)
+    assert scrim_auto_on(None, None, "glow") is False
+    assert scrim_auto_on(None, None, "off") is False
+    # video_bg 경로도 동일하게 glow 에서만 예외
+    assert scrim_auto_on(None, "clip.mp4", "glow") is False
+    assert scrim_auto_on(None, "clip.mp4", "off") is True
+
+
+def test_scrim_explicit_flag_overrides_glow_auto_default():
+    """--scrim/--no-scrim 를 명시하면(글로우 여부와 무관하게) 항상 그 값이
+    이긴다 — "명시가 계산된 기본값을 이긴다" 기존 패턴이 이번 예외 추가로
+    깨지지 않았는지 확인한다. --scrim 자체는 BooleanOptionalAction(기본값
+    None="미지정")이라, None 이 아니면 항상 명시된 것으로 취급되고 최종
+    scrim = args.scrim if args.scrim is not None else scrim_auto_on 삼항식에서
+    scrim_auto_on(글로우 예외 포함)보다 우선한다 — 순수 계산으로 양쪽 분기를
+    직접 검증한다."""
+    def resolve_scrim(explicit_scrim, bg_for_render, video_bg, disc_bg_style):
+        scrim_auto_on = bool(bg_for_render or video_bg) and disc_bg_style != "glow"
+        return explicit_scrim if explicit_scrim is not None else scrim_auto_on
+
+    # glow + 배경 있음 + 명시 안 함(None) -> 이번 라운드가 고친 자동 off
+    assert resolve_scrim(None, ["art.jpg"], None, "glow") is False
+    # glow + 배경 있음이지만 --scrim 을 명시적으로 True 로 줬다면 -> 그래도 켜짐
+    assert resolve_scrim(True, ["art.jpg"], None, "glow") is True
+    # glow + 배경 있음이지만 --no-scrim(False) 명시 -> 명시대로 꺼짐(자동 off 와 결과는
+    # 같지만 "명시가 우선한다"는 경로 자체를 확인)
+    assert resolve_scrim(False, ["art.jpg"], None, "glow") is False
+    # off 모드에서 --scrim 명시 True -> 여전히 우선(기존 동작 회귀 없음)
+    assert resolve_scrim(True, ["art.jpg"], None, "off") is True
+    assert resolve_scrim(False, ["art.jpg"], None, "off") is False
+
+    import inspect
+    src = inspect.getsource(mv.main)
+    assert "scrim = args.scrim if args.scrim is not None else scrim_auto_on" in src
+
+
 def test_make_vinyl_png_generates_file(tmp_path):
     out = tmp_path / "vinyl.png"
     mv.make_vinyl_png(str(out), 300, "7DD3FC")

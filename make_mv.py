@@ -2447,9 +2447,21 @@ def main():
     if args.disc and not args.bg and args.disc_bg_style == "glow":
         bg_for_render = [art]
 
-    # 스크림: 명시 지정 없으면 배경 이미지/영상이 있을 때 자동 on
-    # (레코드 모드가 앨범아트를 배경으로 대신 쓰는 경우도 포함 — bg_for_render 기준)
-    scrim = args.scrim if args.scrim is not None else bool(bg_for_render or args.video_bg)
+    # 스크림: 명시 지정(--scrim/--no-scrim) 없으면 배경 이미지/영상이 있을 때
+    # 자동 on(레코드 모드가 앨범아트를 배경으로 대신 쓰는 경우도 포함 —
+    # bg_for_render 기준) — 단, disc_bg_style=="glow" 는 예외다. glow 배경은
+    # 이미 앨범아트 자체를 블러+채도업해서 배경 전체를 채우는 처리라, 그 위에
+    # 하단 스크림(화면 하단 38%, ≈55% 검게)까지 또 얹으면 하단이 짙은 검은
+    # 띠로 뭉개져 보인다(제품 오너 피드백: "배경 하단 부분이 검은색이 짙어").
+    # 자막/캡션/진행바는 이미 각자 자체 outline+shadow(write_ass() 의
+    # BorderStyle=1/Outline=3/Shadow=1, drawtext 의 shadowcolor)로 가독성을
+    # 확보하므로 스크림이 없어도 읽는 데 문제없다 — glow 모드에서는 자동 기본값을
+    # off 로 낮춘다. off/radial(레코드 모드 꺼짐 또는 헤일로)은 이 버그 리포트
+    # 대상이 아니므로 기존 자동 on 기본값을 그대로 유지한다. --scrim/--no-scrim
+    # 를 명시하면(glow 여부와 무관하게) 항상 그 값이 우선한다(기존 "명시가 계산된
+    # 기본값을 이긴다" 패턴 그대로).
+    scrim_auto_on = bool(bg_for_render or args.video_bg) and args.disc_bg_style != "glow"
+    scrim = args.scrim if args.scrim is not None else scrim_auto_on
 
     # 간주(가사 없는 긴 구간) 검출 -> ♪ 표시용 구간
     gaps = []
