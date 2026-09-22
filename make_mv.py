@@ -761,20 +761,38 @@ def disc_diameter(lay):
 # 조합 전체 크기를 LP_VINYL_SIZE_SCALE 1.5 -> 1.3 으로 낮춘다 — 실측치보다
 # 제품 오너의 육안 피드백 + 실제 렌더 프레임 비교를 우선한다.
 LP_VINYL_SCALE = 0.96      # 비닐 지름 = D_lp * 이 값 (커버보다 "살짝만" 작게)
-LP_VINYL_OFFSET = 0.51     # 커버 중심 기준 오른쪽으로 삐져나오는 양(D_lp 배수)
+LP_VINYL_OFFSET = 0.51     # 커버 중심 기준 (기본 오른쪽으로) 삐져나오는 양(D_lp 배수) —
+                           # --disc-lp-side 로 방향은 바꿀 수 있지만 이 비율 자체는
+                           # 레퍼런스 실측 근거가 있어 그대로 둔다(위 주석 참고).
+# 실제 렌더 리뷰 후 제품 오너 피드백("비닐이 조금 더 삐져나와도 될 것 같아"): 비율
+# (LP_VINYL_OFFSET)은 레퍼런스 실측 근거가 있어 그대로 두고, 그 위에 고정 픽셀만
+# 살짝 더 얹는다 — 스케일에 비례해야 해상도가 달라져도 같은 느낌이 유지되므로
+# round(이 값 * scale) 로 적용한다(off_x 계산부, render() lp_vinyl 분기 참고).
+LP_VINYL_OFFSET_NUDGE_PX = 10
 TEXT_RING_SCALE = 1.15     # 텍스트 링 지름 = D * 이 값 (커버에 가깝게 → 위아래 노출 최소화)
 TEXT_RING_OFFSET = 0.30    # 커버 중심 기준 왼쪽으로 밀어 초승달 형태로 노출(D 배수)
 
-# lp_vinyl 전용 확대 배율. disc_diameter() 는 모든 디스크 테마가 공유하는 함수라
-# (classic/text_ring/square_spin 이 그대로 의존) 여기서 바꾸면 안 되지만, 디자인
-# 레퍼런스(sample/palylist_sample2.png)를 PIL 로 실측하면 커버 높이/프레임 높이
-# ≈0.64 인 반면 disc_diameter() 가 가로형에 주는 값은 ≈0.42 로 눈에 띄게 작다.
-# 그래서 lp_vinyl 테마에서만 disc_diameter() 의 결과(D)에 이 배율을 곱해 커버/비닐
-# PNG 를 더 크게 생성한다 — 다른 테마의 D 는 이 상수와 무관, 전혀 영향받지 않는다.
-# 1.5 는 실사 앨범아트로 렌더해보면(sample/playscreen.png) 조합 전체가 화면을
-# 과도하게 채워 보여, 제품 오너 피드백에 따라 1.3 으로 낮췄다(그래도 disc_diameter
-# 기본값보다는 뚜렷이 크다).
-LP_VINYL_SIZE_SCALE = 1.3
+# lp_vinyl 전용 커버 확대 배율(이력용 상수, 현재는 1.0=확대 없음). disc_diameter()
+# 는 모든 디스크 테마가 공유하는 함수라(classic/text_ring/square_spin 이 그대로
+# 의존) 여기서 바꾸면 안 되지만, 한때 디자인 레퍼런스(sample/palylist_sample2.png)
+# 실측(커버 높이/프레임 높이 ≈0.64 vs disc_diameter() 의 ≈0.42)에 맞춰 lp_vinyl
+# 커버만 disc_diameter() 결과(D)보다 30% 크게(1.3배) 키운 적이 있었다(1.5 ->
+# 제품 오너 피드백으로 1.3 까지 낮춤).
+#
+# 이후 제품 오너 피드백: 테마를 바꿔가며 비교해보니 lp_vinyl 만 앨범 커버 자체가
+# 다른 세 테마(classic/text_ring/square_spin)보다 눈에 띄게 커 보인다 — "앨범
+# 크기"는 테마와 무관하게 일관돼야 하고(비닐이 뒤로 삐져나오는 건 별개의 장식
+# 요소이지 커버 확대가 아니다), 그래서 1.0 으로 되돌려 커버 베이스라인을 D 로
+# 통일한다. LP_VINYL_OFFSET/LP_VINYL_OFFSET_NUDGE_PX/LP_VINYL_SCALE 은 비닐이
+# 커버 뒤로 삐져나오는 정도를 다루는 별개 상수라 이 변경과 무관, 그대로 둔다.
+#
+# 상수 자체(이름과 D_lp = int(D * LP_VINYL_SIZE_SCALE) 곱셈)는 그대로 남겨둔다 —
+# main() 프리패스(PNG 생성)와 render() 오버레이 배치, disc_theme_max_extent() 세
+# 곳 모두 이미 이 상수를 통해서만 D_lp 를 계산하므로(1.3 -> 1.0 변경 시 그대로
+# 세 곳 모두 일관되게 반영됨), 곱셈 자체를 걷어내는 것보다 상수값만 1.0 으로
+# 바꾸는 쪽이 "PNG 프리패스와 오버레이 배치가 어긋나면 안 된다"는 위험을 새로
+# 만들지 않는 가장 작은 변경이다.
+LP_VINYL_SIZE_SCALE = 1.0
 
 
 # 진행바 폭 = 프레임 폭의 이 비율(가운데 정렬). 디자인 레퍼런스
@@ -848,19 +866,28 @@ def title_caption_geometry(disc_active, D, cy, H, scale=1.0, pos="auto", sub_zon
     디스크가 꺼져 있으면 화면 상단(기본 위치인 하단 자막과 겹치지 않도록).
     pos="top": 디스크 활성 여부와 무관하게 항상 화면 상단(레퍼런스 lp_vinyl 샘플처럼
     디스크 위에 캡션을 두는 구도용).
+    pos="bottom"(신규): pos="top" 의 상하 대칭 버전 — 화면 하단에 진행바+제목+
+    아티스트를 하나의 타이트한 묶음으로 앵커한다(제품 오너 피드백: "제목/아티스트/
+    진행바를 하나의 div 로 잡는다고 생각하고 ~10px 간격으로 붙여라"). top 과 마찬가지로
+    진행바가 그 변의 가장자리에 가장 가깝게, 캡션(제목 위/아티스트 아래, 읽는 순서
+    유지)은 진행바 안쪽에 온다. top 의 고정 40*scale 시작 여백과 대칭되도록, 진행바가
+    없을 때는 아티스트 하단이 화면 하단에서 40*scale 만큼 떨어진 지점에 자연 착지한다.
     sub_zone: subtitle_zone_y() 가 반환하는 (zone_top, zone_bottom). disc 바로 아래
     자리(auto)가 이 구간과 겹치면, 디스크와 자막 사이 틈에 억지로 끼워 넣는 대신
     자막 영역보다 아래로 캡션을 내려 자막·캡션이 항상 분리되게 한다(디스크 크기와
-    무관하게 항상 성립하는 결정론적 지오메트리 — 매직 오프셋이 아니다).
+    무관하게 항상 성립하는 결정론적 지오메트리 — 매직 오프셋이 아니다). 이 보정은
+    pos="auto" 전용이다(아래 참고).
 
-    W, progress_bar, progress_bar_pos: pos="top" 이면서 진행바도 상단에 떠 있으면
-    (--progress-bar --progress-bar-pos top), 둘 다 화면 맨 위 근처에 몰려 실측 결과
-    캡션이 진행바 아래쪽과 겹치는 버그가 있었다(sample/playscreen.png 재현 확인 —
-    진행바 트랙 하단 y≈31, 캡션 상단 y≈27, 4px 겹침). 진행바가 이 조건일 때만
-    ttl_y 하한을 progress_bar_geometry() 의 트랙 하단 + 여백으로 올려 절대 겹치지
-    않게 한다. W 를 안 주거나 progress_bar 가 꺼져 있으면(기존 호출부와 하위호환)
-    이 보정은 전혀 적용되지 않고 기존처럼 고정 40*scale 을 그대로 쓴다.
-    반환: (title_fontsize, artist_fontsize, title_y, artist_y_gap).
+    W, progress_bar, progress_bar_pos: pos="top"/"bottom" 이면서 진행바도 같은 변에
+    떠 있으면(예: --progress-bar --progress-bar-pos top --title-caption-pos top), 둘
+    다 화면 가장자리 근처에 함께 쌓인다(실측 결과 겹치는 버그가 있었다 —
+    sample/playscreen.png 재현 확인: 진행바 트랙 하단 y≈31, 캡션 상단 y≈27, 4px
+    겹침). 진행바가 이 조건일 때만 캡션을 진행바 바로 안쪽(GAP=10*scale 여백)으로
+    붙여 절대 겹치지 않게 한다. W 를 안 주거나 progress_bar 가 꺼져 있으면(기존
+    호출부와 하위호환) 이 보정은 전혀 적용되지 않고 기존처럼 고정 40*scale 기준을
+    그대로 쓴다.
+    반환: (title_fontsize, artist_fontsize, title_y, artist_y_gap) — artist_y =
+    title_y + artist_y_gap.
 
     글자 크기/줄간격/여백은 디자인 레퍼런스(sample/playlist_sample1.png, 1433x843)를
     PIL 로 실측한 값 기반이다:
@@ -876,26 +903,44 @@ def title_caption_geometry(disc_active, D, cy, H, scale=1.0, pos="auto", sub_zon
     안 돼 레퍼런스보다 작고 촘촘하다. 아래 상수를 실측 비율에 맞춰 키운다."""
     ttl_fs = int(round(62 * scale))
     art_fs = int(round(35 * scale))
+    # top/bottom 명시 배치 전용 타이트 간격(제품 오너 피드백: "제목/아티스트/진행바를
+    # 하나의 div 로 잡는다고 생각하고" 붙여라) — pos="auto" 의 art_gap(아래 else/elif
+    # 분기, ttl_fs*1.6)과는 완전히 별개 값이다(그 쪽은 절대 안 바꾼다). 10px 로 시작해
+    # 18px 로 한 차례 키웠는데, 실제 렌더 리뷰 후 재요청으로 23px 로 한 번 더 소폭
+    # 확대(이번엔 "이 정도면 됐다" 피드백 — DISC_RESERVED_GAP=32px 는 이 조정과
+    # 무관하게 그대로 둔다). 여전히 pos="auto" 의 ttl_fs*1.6(≈99px)보다는 훨씬
+    # 촘촘한 "한 묶음" 느낌을 유지한다.
+    GAP = int(round(23 * scale))
     if pos == "top":
         ttl_y = int(round(40 * scale))
         if progress_bar and progress_bar_pos == "top" and W:
             _, _, pb_h, pb_y = progress_bar_geometry(W, H, scale, "top")
-            # 진행바 트랙 바로 아래 딱 붙지 않도록 뚜렷한 여백을 둔다(제품 오너
-            # 피드백: "곡진행바와 앨범과의 간격이 전혀 없어" — 캡션도 같은 문제라
-            # 같은 크기의 여백을 재사용).
-            pb_gap = int(round(20 * scale))
-            ttl_y = max(ttl_y, pb_y + pb_h + pb_gap)
+            ttl_y = max(ttl_y, pb_y + pb_h + GAP)
+        art_gap = ttl_fs + GAP
+    elif pos == "bottom":
+        # top 의 상하 대칭: 아티스트(캡션 블록의 가장자리쪽 줄)가 진행바(같은 변에
+        # 있으면 그 안쪽) 또는 화면 하단 여백(40*scale, top 의 고정 시작값과 대칭)에
+        # 앵커되고, 제목은 그 위에 GAP 만큼 띄워 온다.
+        art_bottom = H - int(round(40 * scale))
+        if progress_bar and progress_bar_pos == "bottom" and W:
+            _, _, pb_h, pb_y = progress_bar_geometry(W, H, scale, "bottom")
+            art_bottom = min(art_bottom, pb_y - GAP)
+        art_gap = ttl_fs + GAP
+        art_y = art_bottom - art_fs
+        ttl_y = art_y - art_gap
     elif disc_active:
         # 커버 하단 -> 캡션 여백 = D 의 ≈0.17배(레퍼런스 실측: 58px / D_ref 346px).
         # 고정 픽셀(구 26*scale)이 아니라 D 비례라야 해상도/커버 크기가 달라져도
         # 레퍼런스와 같은 '뚜렷한 틈' 느낌이 유지된다.
         ttl_y = cy + D // 2 + int(round(D * 0.17))
+        # 제목-아티스트 줄 간격: ttl_fs 의 배수. 오늘 이미 1.05 -> 1.3 으로 한 차례
+        # 키웠는데 제품 오너가 더 벌려 달라고 재요청("제목/아티스트 간격 더 벌려줘")
+        # 해 1.3 -> 1.6 으로 추가 확대. (pos="auto" 전용값 — top/bottom 은 위에서 이미
+        # GAP 기반 타이트 값으로 설정됨.)
+        art_gap = int(round(ttl_fs * 1.6))
     else:
         ttl_y = int(round(40 * scale))
-    # 제목-아티스트 줄 간격: ttl_fs 의 배수. 오늘 이미 1.05 -> 1.3 으로 한 차례
-    # 키웠는데 제품 오너가 더 벌려 달라고 재요청("제목/아티스트 간격 더 벌려줘")
-    # 해 1.3 -> 1.6 으로 추가 확대.
-    art_gap = int(round(ttl_fs * 1.6))
+        art_gap = int(round(ttl_fs * 1.6))
 
     if pos == "auto" and disc_active and sub_zone is not None:
         sub_top, sub_bottom = sub_zone
@@ -906,6 +951,260 @@ def title_caption_geometry(disc_active, D, cy, H, scale=1.0, pos="auto", sub_zon
             ttl_y = sub_bottom + gap
 
     return ttl_fs, art_fs, ttl_y, art_gap
+
+
+def disc_vertical_reservation(H, scale, title_caption_on, title_caption_pos, cap_has_text,
+                               progress_bar_on, progress_bar_pos, W):
+    """상/하단에 '고정 오버레이 묶음'(진행바 +/또는 제목+아티스트 캡션)이 실제로
+    차지하는 세로 폭을 변(top/bottom)별로 독립적으로 계산하는 순수 함수.
+
+    title_caption_geometry(pos="top"/"bottom") 와 progress_bar_geometry() 를 그대로
+    재사용해 요소 높이를 구한다(상수 중복 정의 금지) — 두 변의 묶음 모두 "그 변에
+    실제로 배치된 조합"만 반영한다: 캡션이 top 이면 top 변에, progress_bar_pos 가
+    bottom 이면(캡션과 무관하게) bottom 변에 각각 독립적으로 반영된다. 즉 한쪽 변의
+    캡션이 반대쪽 변의 '캡션 없는 진행바 단독'을 예약 대상에서 배제하지 않는다 —
+    다만 이 함수를 호출할지 여부 자체(= 전체 예약 시스템의 on/off)는 호출부(render/
+    main) 가 title_caption_pos 가 "top"/"bottom" 로 명시되고 실제 캡션 텍스트가 있을
+    때만 결정한다(pos="auto" 이거나 캡션이 꺼져 있으면 절대 호출하지 않는다 — 이 함수
+    자체는 그 게이트를 모른다).
+
+    반환: (reserved_top, reserved_bottom).
+      reserved_top    = 상단 묶음이 화면 맨 위(y=0)에서부터 차지하는 절대 y 좌표
+                         (묶음 바로 아래 경계). 아무것도 없으면 0.
+      reserved_bottom = 하단 묶음이 화면 맨 아래(y=H)에서부터 위로 차지하는 '높이'
+                         (호출부는 H - reserved_bottom 으로 절대 y 좌표를 구한다).
+                         아무것도 없으면 0.
+    """
+    cap_active = bool(title_caption_on and cap_has_text)
+
+    reserved_top = 0
+    cap_top = cap_active and title_caption_pos == "top"
+    pb_top = bool(progress_bar_on and progress_bar_pos == "top")
+    if cap_top:
+        _, art_fs, ttl_y, art_gap = title_caption_geometry(
+            False, 0, 0, H, scale, pos="top", W=W,
+            progress_bar=pb_top, progress_bar_pos="top")
+        reserved_top = ttl_y + art_gap + art_fs
+    elif pb_top and W:
+        _, _, pb_h, pb_y = progress_bar_geometry(W, H, scale, "top")
+        reserved_top = pb_y + pb_h
+
+    reserved_bottom = 0
+    cap_bottom_on = cap_active and title_caption_pos == "bottom"
+    pb_bottom = bool(progress_bar_on and progress_bar_pos == "bottom")
+    if cap_bottom_on:
+        _, art_fs, ttl_y, art_gap = title_caption_geometry(
+            False, 0, 0, H, scale, pos="bottom", W=W,
+            progress_bar=pb_bottom, progress_bar_pos="bottom")
+        reserved_bottom = H - ttl_y
+    elif pb_bottom and W:
+        _, _, pb_h, pb_y = progress_bar_geometry(W, H, scale, "bottom")
+        reserved_bottom = H - pb_y
+
+    return reserved_top, reserved_bottom
+
+
+# 예약된 변(캡션/진행바 묶음이 실제로 있는 변) 경계 -> 디스크 가장 가까운 바깥쪽
+# 테두리까지 유지할 간격. 처음엔 프레임 기본 여백(15*scale)을 그대로 재사용했는데,
+# 실제 렌더(sample/playscreen_top.png, sample/playscreen_bottom.png)를 제품 오너가
+# 보고 확인한 버그: disc_avail_zone() 이 만든 [avail_top, avail_bottom] 전체 구간의
+# '정중앙'에 디스크를 놓다 보니(cy = (avail_top+avail_bottom)//2), 디스크 지름이
+# 보통 그 구간보다 작아서 남는 여유가 캡션 쪽과 반대쪽에 반씩 나뉘어 들어갔다 —
+# 캡션과 맞닿은 쪽 간격이 15px 는커녕 프레임 높이의 10~17% 에 달하는 큰 여백으로
+# 보였다(피드백: "간격이 너무 커"). 해결책은 두 가지를 분리하는 것:
+#   1) 한쪽 변만 예약되어 있으면(top 또는 bottom 단독) '중앙정렬' 대신 '앵커' —
+#      디스크의 그 변 쪽 바깥 테두리를 예약 경계에서 이 간격만큼만 띄운다. 반대쪽
+#      (예약 없는 쪽)에 남는 여유는 자연스럽게 그대로 둔다(문제 없음, 원래도 여긴
+#      캡션이 없어 넓어 보이는 게 정상).
+#      -> 이 상수가 바로 그 "이 간격": 15px 는 1080p 기준 거의 안 보이는 수준이라
+#         제품 오너 피드백("붙으면 안되지만, 진짜 적당히 살짝 떨어져서 이쁘게")에
+#         맞춰 2배 이상(32px 레퍼런스)으로 키웠다 — disc_avail_zone() 의 프레임
+#         기본 마진(margin, 캡션이 전혀 없을 때 '그냥 프레임 가장자리에서 15px'
+#         용도)과는 별개 상수다: 프레임 가장자리 여백과 '캡션 블록에 붙지 않기
+#         위한 여백'은 의미가 다르므로 값도 따로 관리한다.
+#   2) 양쪽 변이 모두 예약되어 있으면(예: 진행바 top + 캡션 bottom) '앵커'할 단일
+#      기준면이 없으므로 그 사이 정중앙에 놓는다(기존 방식 유지, 이 경우엔 애초에
+#      남는 여유가 양쪽에 자연히 나뉘는 게 맞는 구도라 버그가 아니었다).
+DISC_RESERVED_GAP = 32
+
+
+def disc_avail_zone(H, W, scale, title_caption_on, title_caption_pos, cap_has_text,
+                     progress_bar_on, progress_bar_pos, duration):
+    """디스크(+비닐/링)가 세로로 놓일 수 있는 구간 [avail_top, avail_bottom] 을 구하는
+    순수 함수. render()/main() 양쪽에서 재사용해 '디스크 재배치'와 'D 축소(오버플로
+    방지)' 계산의 기준을 하나로 통일한다(따로 계산하면 어긋나기 쉽다).
+
+    title_caption_pos 가 "top"/"bottom" 로 명시되고 실제로 캡션 텍스트가 있을 때만
+    disc_vertical_reservation() 의 예약 영역을 반영한다 — 그 변이 실제로 예약되어
+    있으면(reserved_top/reserved_bottom > 0) DISC_RESERVED_GAP(캡션 블록에 너무
+    붙지 않기 위한 여백), 그 변에 아무것도 없으면(반대쪽 변만 예약된 '한쪽만' 케이스)
+    순수 프레임 마진(15*scale, margin)을 각 변에 독립적으로 적용한다. title_caption_pos
+    가 "auto" 이거나 title_caption 이 꺼져 있거나 예약 영역이 서로 겹쳐 여유가 없는
+    예외 상황에는 예약을 전혀 적용하지 않고 순수 프레임 마진(margin, H-margin)만
+    반환한다.
+
+    반환: (avail_top, avail_bottom, top_reserved, bottom_reserved).
+      top_reserved/bottom_reserved 는 그 변에 실제로 진행바/캡션 묶음이 예약되어
+      있는지를 각각 나타낸다 — 호출부(render())는 이 두 플래그로 '한쪽 변만
+      예약되어 있으면 그 변에 디스크를 앵커하고, 양쪽 다 예약되어 있으면 그 사이
+      정중앙에 놓고, 둘 다 아니면(=예외/미예약) 기존 base_cy 를 그대로 쓰는'
+      판단을 내린다(회귀 방지 — reserved 가 모두 False 인데 cy 를 건드리면
+      pos="auto"/캡션-꺼짐 경로의 기존 동작이 깨진다). D 축소 계산에는 이 플래그와
+      무관하게 항상 avail_top/avail_bottom 을 그대로 쓴다(예약이 없을 때도 15px
+      프레임 마진은 항상 지켜야 하므로)."""
+    margin = int(round(15 * scale))
+    reserved_gap = int(round(DISC_RESERVED_GAP * scale))
+    pb_will_draw = bool(progress_bar_on and duration)
+    cap_will_draw = bool(title_caption_on and cap_has_text)
+    if cap_will_draw and title_caption_pos in ("top", "bottom"):
+        reserved_top, reserved_bottom = disc_vertical_reservation(
+            H, scale, title_caption_on, title_caption_pos, cap_has_text,
+            pb_will_draw, progress_bar_pos, W)
+        top_reserved = reserved_top > 0
+        bottom_reserved = reserved_bottom > 0
+        avail_top = reserved_top + (reserved_gap if top_reserved else margin)
+        avail_bottom = H - reserved_bottom - (reserved_gap if bottom_reserved else margin)
+        if avail_top < avail_bottom:
+            return avail_top, avail_bottom, top_reserved, bottom_reserved
+    return margin, H - margin, False, False
+
+
+def disc_stack_layout(H, scale, reserved_top, reserved_bottom, top_reserved, bottom_reserved, D,
+                       sub_zone=None):
+    """상단 묶음(진행바/캡션) · 디스크 · 하단 묶음을 "실제로 존재하는 요소만"
+    하나의 강체 스택으로 보고, 그 스택 전체를 프레임 세로 중앙에 오도록 이동량
+    (stack_shift)과 디스크 중심(cy)을 함께 계산하는 순수 함수.
+
+    버그 재현(sample/screen.png, --disc-theme lp_vinyl --title-caption-pos
+    bottom): 이전 코드는 디스크를 하단 묶음에서 DISC_RESERVED_GAP 만큼만 띄워
+    앵커하고(disc_avail_zone()/render() 의 옛 elif bottom_reserved 분기), 나머지
+    모든 여유 공간을 반대쪽(위)에 몰아넣었다 — 화면 위쪽에 거대한 빈 공간이 남고
+    디스크+캡션 조합 전체가 하단에 짓눌려 보였다. 이 함수는 "묶음+간격+디스크
+    (+간격+묶음)" 전체 폭(stack_h)을 구해 프레임에서 정중앙으로 옮긴다 — 상단만/
+    하단만/양쪽 다 예약된 세 경우 모두 같은 공식 하나로 처리한다(양쪽 다 예약된
+    경우는 대수적으로 기존 '두 예약 경계 사이 중앙' 공식과 디스크 cy 가 완전히
+    동일하게 나온다 — 유일한 차이는 상/하단 묶음 자체도 이제 여유가 있으면
+    프레임 가장자리에서 안쪽으로 함께 이동한다는 점이며, 이는 의도된 개선이다).
+
+    reserved_top/reserved_bottom: disc_vertical_reservation() 이 돌려주는 값
+    그대로(각 변 묶음의 실제 높이, 없으면 0). top_reserved/bottom_reserved 도
+    disc_avail_zone() 과 같은 의미의 플래그.
+
+    반환: (stack_shift, cy). 둘 다 예약이 전혀 없으면(top_reserved 와
+    bottom_reserved 가 모두 False) (0, None) — 호출부는 cy=None 이면 반드시
+    기존 base_cy 를 그대로 써야 한다(회귀 방지 — pos="auto"/캡션 꺼짐 경로는
+    top_reserved/bottom_reserved 자체가 항상 False 이므로 이 함수를 호출해도
+    안전하게 no-op).
+
+    stack_shift 사용법(중요 — render() 의 실제 진행바/캡션 draw 호출부가 반드시
+    이 값과 같은 방식으로 어긋남 없이 적용해야, "예측"(이 함수)과 "실제 그리기"가
+    항상 일치한다):
+      - 상단 묶음(progress_bar_geometry/title_caption_geometry 를 pos="top" 으로
+        호출해 얻은 y 값)에는 stack_shift 를 그대로 더한다(두 함수 모두 top 분기는
+        H 와 무관한 고정 상수 기반이라 덧셈으로만 아래로 밀 수 있다).
+      - 하단 묶음에는 H 대신 (H - stack_shift) 를 두 함수에 넘긴다(두 함수의 모든
+        bottom 분기가 "H - 상수" 형태이므로, H 를 줄이면 정확히 그만큼 위로 밀린
+        결과와 대수적으로 동일하다 — 새 매개변수를 추가하지 않고 기존 H 인자를
+        재사용하는 방식).
+
+    sub_zone: subtitle_zone_y() 가 반환하는 (zone_top, zone_bottom), 자막(가사)
+    안전영역. round 6 자체 검증 중 발견(제품 오너가 보고한 버그는 아님): 상/하단
+    묶음이 스택 중앙정렬로 안쪽(프레임 중앙 쪽)으로 이동하다가 — 특히 여유가
+    많을 때, 즉 원래 버그가 가장 심했던 바로 그 상황에서 — 자막 영역을 침범할
+    수 있다(title_caption_geometry() 의 sub_zone 회피는 원래 pos="auto" 전용이라
+    "top"/"bottom" 명시 배치는 대상이 아니었다 — 이전엔 두 묶음이 프레임
+    가장자리에 고정돼 있어 문제가 안 됐지만, 이제는 이동하므로 새로 생긴 충돌
+    가능성이다). sub_zone 을 주면 stack_shift 를 필요한 만큼만 줄여(0 이 하한)
+    하단 묶음이 자막 영역 아래쪽을, 상단 묶음이 자막 영역 위쪽을 침범하지 않게
+    한다 — 두 묶음 모두 같은 stack_shift 를 공유하므로 이 클램프도 디스크 cy 에
+    자동으로 반영되어 여기서도 어긋남이 생기지 않는다."""
+    if not (top_reserved or bottom_reserved):
+        return 0, None
+    gap = int(round(DISC_RESERVED_GAP * scale))
+    stack_h = D
+    if top_reserved:
+        stack_h += reserved_top + gap
+    if bottom_reserved:
+        stack_h += reserved_bottom + gap
+    stack_shift = max((H - stack_h) // 2, 0)
+
+    if sub_zone is not None:
+        sub_top, sub_bottom = sub_zone
+        sub_gap = int(round(16 * scale))  # pos="auto" 의 기존 sub_zone 여백(16*scale)과 동일
+        if bottom_reserved:
+            # 하단 묶음의 이동 후 위쪽 경계가 자막 영역 아래쪽을 침범하지 않게.
+            group_top_edge = H - reserved_bottom - stack_shift
+            if group_top_edge < sub_bottom + sub_gap:
+                max_shift = max(H - reserved_bottom - sub_bottom - sub_gap, 0)
+                stack_shift = min(stack_shift, max_shift)
+        if top_reserved:
+            # 상단 묶음의 이동 후 아래쪽 경계가 자막 영역 위쪽을 침범하지 않게.
+            group_bottom_edge = reserved_top + stack_shift
+            if group_bottom_edge > sub_top - sub_gap:
+                max_shift = max(sub_top - sub_gap - reserved_top, 0)
+                stack_shift = min(stack_shift, max_shift)
+
+    x = (reserved_top + gap) if top_reserved else 0
+    cy = stack_shift + x + D // 2
+    return stack_shift, cy
+
+
+def disc_theme_max_extent(D, disc_theme):
+    """테마별 디스크 조합의 최대 세로 확장치 — classic 은 D 그대로, square_spin 은
+    45도 회전 대각선(D*sqrt(2)), lp_vinyl 은 커버(D*LP_VINYL_SIZE_SCALE, 비닐보다
+    큼), text_ring 은 텍스트 링(D*TEXT_RING_SCALE, 커버보다 큼). 모든 테마의
+    오버레이가 cy 를 중심으로 대칭 배치되므로(overlay y = cy - extent//2), 이
+    확장치의 절반이 곧 'cy 에서 그 조합의 바깥 테두리까지의 거리'이기도 하다 —
+    disc_shrink_factor() 의 축소 비율 계산과 render() 의 단일 변 앵커 배치(근접
+    테두리까지의 절반 거리) 양쪽에서 재사용한다(따로 계산하면 어긋나기 쉽다)."""
+    if disc_theme == "square_spin":
+        max_extent = int(math.ceil(D * math.sqrt(2)))
+        max_extent += max_extent % 2
+    elif disc_theme == "lp_vinyl":
+        max_extent = int(D * LP_VINYL_SIZE_SCALE)
+        max_extent -= max_extent % 2
+    elif disc_theme == "text_ring":
+        max_extent = int(D * TEXT_RING_SCALE)
+        max_extent -= max_extent % 2
+    else:
+        max_extent = D
+    return max_extent
+
+
+def disc_shrink_factor(D, avail_top, avail_bottom, disc_theme):
+    """디스크/비닐/링 조합이 [avail_top, avail_bottom] 세로 구간을 넘지 않도록 D 에
+    곱할 축소 배율(0 < factor <= 1.0)을 계산하는 순수 함수. 테마별 최대 세로
+    확장치는 disc_theme_max_extent() 를 재사용한다(중복 정의 금지).
+
+    main() 의 PNG 프리패스와 render() 의 오버레이 배치 양쪽에서 반드시 이 함수
+    하나만 호출해야 한다 — 각자 따로 계산하면 LP_VINYL_SIZE_SCALE 프리패스/오버레이
+    공식 불일치(주석 참고)와 같은 종류의 크기 불일치 버그가 재발한다."""
+    vzone = max(avail_bottom - avail_top, 1)
+    max_extent = disc_theme_max_extent(D, disc_theme)
+    if max_extent <= vzone or max_extent <= 0:
+        return 1.0
+    return vzone / max_extent
+
+
+def lp_vinyl_cover_center_x(W, D_lp, VD, off_x):
+    """lp_vinyl 테마의 커버+비닐 '조합' 바운딩박스를 프레임 가로 중앙(W/2)에 맞추는
+    커버 중심 x좌표(cover_cx)를 구하는 순수 함수. 비닐 중심 x 는 cover_cx + off_x.
+
+    off_x 는 부호 있는 값(양수=비닐이 커버 중심 기준 오른쪽으로, 음수=왼쪽으로
+    삐져나옴 — --disc-lp-side 의 "right"/"left" 에 대응). 어느 쪽이 조합의 바운딩
+    박스 경계를 결정하는지 하드코딩하지 않고, 커버/비닐 각 변의 좌표를 min/max 로
+    비교해 바운딩박스를 구하므로 좌/우 어느 방향의 off_x 를 넣어도(그리고 향후
+    LP_VINYL_OFFSET/LP_VINYL_OFFSET_NUDGE_PX/LP_VINYL_SCALE 값이 바뀌어도) 항상
+    정확히 중앙정렬된 cover_cx 를 돌려준다.
+
+    유도: cover_cx=0 기준 상대 좌표로 커버/비닐 각 변을 구해 bbox_left/right 를
+    잡은 뒤(rel_cover_*, rel_vinyl_*), 그 bbox 의 중점이 W/2 가 되도록 cover_cx 를
+    풀면 cover_cx = W/2 - (rel_bbox_left + rel_bbox_right) / 2."""
+    rel_cover_left, rel_cover_right = -D_lp // 2, D_lp // 2
+    rel_vinyl_left, rel_vinyl_right = off_x - VD // 2, off_x + VD // 2
+    rel_bbox_left = min(rel_cover_left, rel_vinyl_left)
+    rel_bbox_right = max(rel_cover_right, rel_vinyl_right)
+    return W // 2 - (rel_bbox_left + rel_bbox_right) // 2
 
 
 def add_square_shadow(parts, cur, size, x, y, fps, label):
@@ -1273,12 +1572,13 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
            intro_card=False, ic_title="", ic_artist="", gaps=None,
            viz_colors=None, bg_style="gradient", bg_grad=None,
            scrim=False, disc_png=None, progress_bar=False,
-           progress_bar_pos="bottom",
+           progress_bar_pos="bottom", progress_bar_color=None,
            sparkle=False, outro_cta=False, outro_cta_text="",
            disc_bg_style="off", disc_theme="classic", disc_ring_text=None,
            cover_png=None, vinyl_png=None, ring_png=None,
            title_caption=False, cap_title="", cap_artist="",
-           title_caption_pos="auto", sub_pos="bottom", sub_size=1.0):
+           title_caption_pos="auto", sub_pos="bottom", sub_size=1.0,
+           disc_lp_side="right", disc_ring_side="left"):
     work_dir = os.path.dirname(os.path.abspath(ass_path)) or "."
     ass_name = os.path.basename(ass_path)
     W, H = lay["W"], lay["H"]
@@ -1376,33 +1676,87 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     # disc_ring_text 는 text_ring 프리패스(make_ring_text_png)가 이미 ring_png 에
     # 구워 넣으므로 여기선 쓰이지 않는다 — 호출부(main)와 시그니처를 맞추기 위해 받는다.
     disc_idx = None
+    # 자막(가사) 안전영역 — disc_stack_layout() 의 스택 중앙정렬이 상/하단 묶음을
+    # 안쪽으로 옮기다가 자막 영역을 침범하지 않도록 클램프하는 데 필요해서, 원래
+    # title_caption 블록 안에서만 계산하던 것을 여기로 끌어올렸다(disc_active
+    # 여부와 무관하게 항상 계산 가능한 순수 함수라 부작용 없음). title_caption
+    # 블록에서는 이 값을 재계산하지 않고 그대로 재사용한다.
+    sub_zone = subtitle_zone_y(lay, sub_pos=sub_pos, sub_size=sub_size)
+    # 상/하단 예약 스택 전체(진행바/캡션 묶음 + 디스크)를 프레임 중앙으로 옮기는
+    # 이동량 — disc_stack_layout() 이 top_reserved/bottom_reserved 가 하나라도
+    # True 일 때만 0 이 아닌 값으로 채운다(아래 disc_active 분기 내부). disc_active
+    # 가 False 이거나 예약이 전혀 없으면(pos="auto"/캡션 꺼짐) 0 으로 남아, 뒤쪽의
+    # 진행바/캡션 draw 호출부가 그 값을 그대로 더해도(top) / H 대신 H-shift 를
+    # 넘겨도(bottom) 완전히 no-op — 이 두 호출부는 disc_active 여부와 무관하게
+    # 항상 실행되므로 여기서 미리 0 으로 초기화해 둬야 한다.
+    stack_shift = 0
     if disc_active:
         D = disc_diameter(lay)
         base_cy = int(H * 0.30) if H > W else int(H * 0.36)  # 세로형은 조금 위
         cy = base_cy
 
-        # 상단 레이아웃 조정: --title-caption-pos top 이면서 --progress-bar-pos top
-        # 도 켜져 있으면 진행바 트랙 + 캡션(제목/아티스트)이 화면 맨 위에 함께
-        # 쌓인다. cy 를 화면 정중앙 고정값으로 두면 이 예약 영역이 디스크 위쪽을
-        # 그대로 파고들어 겹친다(실제 재현: sample/playscreen.png, 리포트의 확인된
-        # 버그) — 대신 진행바+캡션이 실제로 차지하는 아래쪽 경계(reserved_bottom)
-        # 를 구해서, 디스크는 '전체 프레임'이 아니라 '그 아래 남은 영역'의
-        # 세로 중앙에 오도록 다시 잡는다. pos="auto" 이거나 진행바가 꺼져
-        # 있으면(둘 중 하나만 아니어도) 이 블록은 전혀 실행되지 않아 기존
-        # 동작이 그대로 유지된다(회귀 방지).
-        if (title_caption and (cap_title or cap_artist)
-                and title_caption_pos == "top"
-                and pb_will_draw and progress_bar_pos == "top"):
-            _, art_fs0, ttl_y0, art_gap0 = title_caption_geometry(
-                False, 0, 0, H, scale, pos="top", sub_zone=None,
-                W=W, progress_bar=True, progress_bar_pos="top")
-            cap_bottom = ttl_y0 + art_gap0 + art_fs0
-            # 캡션 하단 -> 디스크 상단 여백(제품 오너 피드백: 진행바-앨범 간격이
-            # 전혀 없었다는 지적과 같은 종류의 문제라 같은 크기의 여백을 쓴다).
-            disc_gap = int(round(24 * scale))
-            reserved_bottom = cap_bottom + disc_gap
-            if reserved_bottom < H:
-                cy = reserved_bottom + (H - reserved_bottom) // 2
+        # 상/하단 레이아웃 재배치 + 세로 오버플로 방지 축소 (신규).
+        # --title-caption-pos 가 "top"/"bottom" 으로 명시되고 실제로 캡션 텍스트가
+        # 있을 때만 disc_avail_zone() 이 진행바+캡션 예약 영역(양쪽 변 독립,
+        # disc_vertical_reservation() 참고)을 반영해 [avail_top, avail_bottom] 을
+        # 좁혀 돌려준다(top_reserved/bottom_reserved 로 어느 변이 실제로 예약됐는지
+        # 알려준다). pos="auto" 이거나 캡션이 꺼져 있으면(둘 다 False) cy 는 절대
+        # 건드리지 않고 위 base_cy 를 그대로 쓴다 — 이 경로는 기존 동작과 100%
+        # 동일해야 하는 회귀 방지 경계다.
+        # D 축소는 예약 여부와 무관하게 항상 적용한다 — 예약이 전혀 없어도
+        # avail_top/avail_bottom 은 순수 프레임 마진(15*scale)을 반영하므로, 캡션/
+        # 진행바가 전혀 없는 기본 렌더에서도 lp_vinyl/text_ring/square_spin 조합이
+        # 프레임 세로를 벗어나던 기존 버그(예약 전무 -> 축소 전무)가 여기서 함께
+        # 고쳐진다. 앵커 계산(아래)이 축소된 D 를 써야 하므로 축소를 cy 계산보다
+        # 먼저 한다.
+        cap_has_text = bool(cap_title or cap_artist)
+        avail_top, avail_bottom, top_reserved, bottom_reserved = disc_avail_zone(
+            H, W, scale, title_caption, title_caption_pos, cap_has_text,
+            progress_bar, progress_bar_pos, duration)
+
+        # 커버 크기/위치는 테마와 무관하게 항상 "classic"(=D 그대로, 확장 없음) 기준
+        # 하나로만 정한다 — disc_theme_max_extent(D, disc_theme) 로 활성 테마 값을
+        # 넣으면 테마마다(특히 text_ring TEXT_RING_SCALE=1.15, square_spin
+        # sqrt(2)≈1.414) 이 D 자체가 서로 다르게 축소돼, 같은 예약 영역에서도
+        # 테마를 바꾸면 앨범 커버 "크기"와 "중심(cy)"까지 달라지는 버그가 있었다
+        # (제품 오너 피드백: 테마 바꾸면 커버 크기/캡션 위치가 들쭉날쭉). 링/회전
+        # 캔버스 등 테마별 장식(RD/D_lp/VD/off_x)은 여전히 이 공용 D 에 각자의
+        # 배율(TEXT_RING_SCALE/sqrt(2)/LP_VINYL_* 등, 아래 각 분기)을 곱해 자기
+        # 몫만큼 화면 밖으로 더 튀어나올 수 있다 — 그건 의도된 장식이지 "커버
+        # 크기"가 아니므로 여기서 막지 않는다(제품 오너: 타이트한 예약 상황에서
+        # 장식이 예약 마진을 살짝 넘는 건 허용, 프레임 자체를 벗어나지만 않으면
+        # 됨 — 실측 결과 disc_diameter()/TEXT_RING_SCALE/sqrt(2) 값 범위에서는
+        # 프레임 자체를 넘는 경우가 실제로 없음을 확인했다, 아래 테스트 참고).
+        shrink = disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+        if shrink < 1.0:
+            D = int(D * shrink)
+            D -= D % 2
+            D = max(D, 2)
+
+        # 예약된 변이 하나라도 있으면(top 단독/bottom 단독/양쪽 다) 그 변(들)의
+        # 진행바/캡션 묶음 + 디스크를 "존재하는 요소만" 하나의 강체 스택으로 보고
+        # 프레임 세로 중앙으로 옮긴다(disc_stack_layout() 참고 — 이전엔 단일 변
+        # 케이스에서 디스크를 예약 경계에 DISC_RESERVED_GAP 만큼만 앵커하고 남는
+        # 여유를 전부 반대쪽에 몰아넣어, 예: title_caption_pos="bottom" 하나만
+        # 켜져 있을 때 화면 위쪽에 거대한 빈 공간이 남고 디스크+캡션 조합이
+        # 하단에 짓눌려 보이는 버그가 있었다 — sample/screen.png 재현 확인).
+        # stack_shift 는 뒤쪽의 실제 진행바/캡션 draw 호출부에도 반드시 똑같이
+        # 적용해야 한다(이 예측과 실제 그리기가 어긋나면 디스크만 중앙으로 옮겨지고
+        # 캡션/진행바는 여전히 프레임 가장자리에 붙어버린다) — disc_stack_layout()
+        # 의 docstring에 두 호출부가 공유해야 하는 정확한 적용 방식이 있다.
+        # 예약이 전혀 없으면(pos="auto"/캡션 꺼짐) disc_stack_layout() 이 그 즉시
+        # (0, None) 을 돌려주므로 cy 는 절대 안 건드리고 위 base_cy 를 그대로 쓴다
+        # — 이 경로는 기존 동작과 100% 동일해야 하는 회귀 방지 경계다.
+        if top_reserved or bottom_reserved:
+            reserved_top, reserved_bottom = disc_vertical_reservation(
+                H, scale, title_caption, title_caption_pos, cap_has_text,
+                pb_will_draw, progress_bar_pos, W)
+            stack_shift, stack_cy = disc_stack_layout(
+                H, scale, reserved_top, reserved_bottom,
+                top_reserved, bottom_reserved, D, sub_zone=sub_zone)
+            if stack_cy is not None:
+                cy = stack_cy
+        # else: 예약 없음(또는 예외적으로 겹쳐 여유가 없는 상황) -> base_cy 그대로.
 
         # 배경 헤일로: 디스크 뒤에서 은은한 컬러 글로우가 음악(RMS)에 반응해 반짝임.
         # geq 알파 낙차로 소프트 엣지 원을 만들고(추가 -i 입력 불필요, 합성 소스),
@@ -1475,37 +1829,38 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
         elif disc_theme == "lp_vinyl" and vinyl_png and cover_png:
             # ---- lp_vinyl: 회전하는 비닐(LP_VINYL_SCALE 배) 뒤에 정적 정사각
             #      커버를 classic 과 동일한 앵커에 겹친다. 디자인 레퍼런스처럼
-            #      한쪽(오른쪽)으로 크게 삐져나오는 비대칭 구도(LP_VINYL_OFFSET) ----
-            #      D_lp = LP_VINYL_SIZE_SCALE 배 확대된 커버 지름. main() 프리패스가
-            #      cover_png/vinyl_png 를 정확히 이 크기로 구웠으므로 오버레이 좌표도
-            #      전부 D_lp 기준이어야 한다(D 를 쓰면 실제 PNG 크기와 어긋남) ----
+            #      한쪽으로 크게 삐져나오는 비대칭 구도(LP_VINYL_OFFSET, 기본 오른쪽 —
+            #      --disc-lp-side left 로 반대쪽도 선택 가능) ----
+            #      D_lp = D * LP_VINYL_SIZE_SCALE(현재 1.0 — 커버 크기를 다른 세
+            #      테마와 통일하기 위해 확대를 걷어냄, 위 상수 정의부 주석 참고).
+            #      곱셈 자체는 남겨둔다: main() 프리패스가 cover_png/vinyl_png 를
+            #      정확히 이 D_lp 크기로 구웠으므로 오버레이 좌표도 전부 D_lp
+            #      기준이어야 한다(D 를 쓰면 실제 PNG 크기와 어긋남) ----
             D_lp = int(D * LP_VINYL_SIZE_SCALE)
             D_lp -= D_lp % 2
             base_idx = audio_idx + 1 + (1 if logo else 0)   # vinyl_png 입력
             cover_idx = base_idx + 1                        # cover_png 입력
             VD = int(D_lp * LP_VINYL_SCALE)
             VD -= VD % 2
-            off_x = int(D_lp * LP_VINYL_OFFSET)  # 커버 뒤에서 오른쪽으로 크게 비져나오게
+            # 오프셋 크기(항상 양수) + 방향 부호. LP_VINYL_OFFSET 비율은 레퍼런스
+            # 실측 근거가 있어 그대로 두고(주석 참고), 제품 오너가 "조금 더
+            # 삐져나오게" 요청한 만큼만 스케일 보정된 고정 픽셀을 더한다 — 이 합산값
+            # (off_x) 이 부호까지 포함해 아래 vx/바운딩박스 계산에 그대로 흘러들어가야
+            # 두 계산이 어긋나지 않는다.
+            off_mag = int(D_lp * LP_VINYL_OFFSET) + int(round(LP_VINYL_OFFSET_NUDGE_PX * scale))
+            off_x = off_mag if disc_lp_side != "left" else -off_mag
             rotate_expr = f"rotate=2*PI*t/16:ow={VD}:oh={VD}:c=black@0"
             if rotate_eval_flag():
                 rotate_expr += ":eval=frame"
             parts.append(
                 f"[{base_idx}:v]format=rgba,{rotate_expr},fps={FPS}[vinylrot]")
             # 커버+비닐 "조합"의 바운딩박스를 화면 중앙에 맞춘다(제품 오너 피드백:
-            # 예전엔 커버만 W/2 에 중심을 두고 비닐이 거기서 더 오른쪽으로 삐져나가
-            # 조합 전체가 눈에 띄게 오른쪽으로 쏠려 보였다 — sample/playscreen.png,
-            # 비닐이 화면 오른쪽 끝에 거의 닿을 정도).
-            # 바운딩박스: 왼쪽 끝 = 커버 왼쪽 끝(cover_cx - D_lp/2), 오른쪽 끝 =
-            # 비닐 오른쪽 끝(cover_cx + off_x + VD/2) — LP_VINYL_OFFSET/SCALE 값
-            # 범위에서 커버가 항상 더 왼쪽으로, 비닐이 항상 더 오른쪽으로 튀어나가
-            # 있으므로 이 두 끝이 곧 조합 전체의 좌우 경계다. 조합 중앙이 W/2 가
-            # 되도록 커버 중심(cover_cx)을 W/2 에서 왼쪽으로 bbox_shift 만큼 옮긴다:
-            #   (left + right) / 2 = W/2
-            #   left  = cover_cx - D_lp/2
-            #   right = cover_cx + off_x + VD/2
-            #   => cover_cx = W/2 - (off_x + VD/2 - D_lp/2) / 2
-            bbox_shift = (off_x + VD // 2 - D_lp // 2) // 2
-            cover_cx = W // 2 - bbox_shift
+            # 예전엔 커버만 W/2 에 중심을 두고 비닐이 거기서 더 튀어나가 조합 전체가
+            # 한쪽으로 쏠려 보였다 — sample/playscreen.png). lp_vinyl_cover_center_x()
+            # 가 커버/비닐 각 변 좌표를 min/max 로 비교해 바운딩박스를 구하므로,
+            # --disc-lp-side 로 off_x 부호가 바뀌어도(왼쪽/오른쪽 어느 쪽이 실제로
+            # 더 튀어나오는지 하드코딩하지 않고) 항상 정확히 중앙정렬된다.
+            cover_cx = lp_vinyl_cover_center_x(W, D_lp, VD, off_x)
             vx = cover_cx + off_x - VD // 2
             vy = cy - VD // 2
             parts.append(f"{cur}[vinylrot]overlay={vx}:{vy}[vvinyl]")
@@ -1517,20 +1872,27 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
             cur = "[vdisc]"
         elif disc_theme == "text_ring" and ring_png and cover_png:
             # ---- text_ring: 회전하는 텍스트 링(TEXT_RING_SCALE 배) + 정적 커버.
-            #      디자인 레퍼런스처럼 커버 중심에서 왼쪽으로 밀어(TEXT_RING_OFFSET)
-            #      대부분 커버 뒤에 가려지고 왼쪽에 초승달 모양으로만 노출되게 ----
+            #      디자인 레퍼런스처럼 커버 중심에서 밀어(TEXT_RING_OFFSET, 기본
+            #      왼쪽 — --disc-ring-side right 로 반대쪽도 선택 가능) 대부분
+            #      커버 뒤에 가려지고 한쪽에 초승달 모양으로만 노출되게 ----
+            #      lp_vinyl(round 3) 과 달리 커버 위치(cover_cx)는 항상 W/2 고정 —
+            #      링만 움직이고 커버는 안 움직이므로(아래), --disc-ring-side 는
+            #      off_x 부호만 뒤집으면 되고 lp_vinyl_cover_center_x() 같은 별도
+            #      바운딩박스 재중앙 계산은 필요 없다(렌더로 직접 확인, round 5
+            #      보고 참고).
             base_idx = audio_idx + 1 + (1 if logo else 0)   # ring_png 입력
             cover_idx = base_idx + 1                        # cover_png 입력
             RD = int(D * TEXT_RING_SCALE)
             RD -= RD % 2
-            off_x = int(D * TEXT_RING_OFFSET)  # 커버 뒤에서 왼쪽으로 밀어 초승달 노출
+            off_mag = int(D * TEXT_RING_OFFSET)  # 커버 뒤에서 밀어 초승달 노출(크기)
+            off_x = off_mag if disc_ring_side == "right" else -off_mag
             rotate_expr = f"rotate=2*PI*t/16:ow={RD}:oh={RD}:c=black@0"
             if rotate_eval_flag():
                 rotate_expr += ":eval=frame"
             parts.append(
                 f"[{base_idx}:v]format=rgba,{rotate_expr},fps={FPS}[ringrot]")
             cover_cx = (W - D) // 2 + D // 2
-            rx = cover_cx - off_x - RD // 2
+            rx = cover_cx + off_x - RD // 2
             ry = cy - RD // 2
             parts.append(f"{cur}[ringrot]overlay={rx}:{ry}[vring]")
             cur = "[vring]"
@@ -1584,11 +1946,22 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     # --title/--artist 는 썸네일 등 다른 용도로도 쓰이므로, 이 오버레이는 명시적
     # opt-in(--title-caption)일 때만 그린다 — 자동으로 켜지지 않는다.
     if title_caption and (cap_title or cap_artist):
-        sub_zone = subtitle_zone_y(lay, sub_pos=sub_pos, sub_size=sub_size)
+        # sub_zone 은 위(disc_active 분기 이전)에서 이미 계산해 뒀다 — disc_stack_layout()
+        # 의 자막 충돌 클램프와 여기 title_caption_geometry() 의 pos="auto" 회피 로직이
+        # 항상 같은 값을 봐야 하므로 재계산하지 않고 재사용한다.
+        # stack_shift 적용(disc_stack_layout() 의 사용법 docstring 참고): pos="top"
+        # 이면 H 는 그대로 두고 나중에 ttl_y 에 더하고, pos="bottom" 이면 H 대신
+        # H-stack_shift 를 넘긴다(그 분기 내부 공식이 전부 "H - 상수" 형태라 이렇게
+        # 하면 함수를 안 건드리고도 정확히 같은 양만큼 위로 밀린다). disc_active 가
+        # False 이거나 예약이 없으면(pos="auto") stack_shift==0 이라 완전히 no-op —
+        # 기존 동작과 100% 동일하게 유지된다.
+        cap_H = H - stack_shift if title_caption_pos == "bottom" else H
         ttl_fs, art_fs, ttl_y, art_gap = title_caption_geometry(
             disc_active, D if disc_active else 0, cy if disc_active else 0,
-            H, scale, pos=title_caption_pos, sub_zone=sub_zone,
+            cap_H, scale, pos=title_caption_pos, sub_zone=sub_zone,
             W=W, progress_bar=pb_will_draw, progress_bar_pos=progress_bar_pos)
+        if title_caption_pos == "top":
+            ttl_y += stack_shift
         cap_y = ttl_y
         if cap_title:
             write_textfile(cap_title, os.path.join(work_dir, "_cap_ttl.txt"))
@@ -1622,9 +1995,22 @@ def render(audio, ass_path, out, lay, bg_list=None, viz="waves",
     # (오버레이 x 를 시간에 따라 슬라이드시키는 옛 트릭은 트랙에 여백을 두면
     #  0% 지점에서 필 몸통 일부가 여백 안쪽으로 새어 보이는 문제가 있어 안 씀.)
     if progress_bar and duration:
+        # stack_shift 적용(disc_stack_layout() 사용법 참고, 위 title_caption 호출부와
+        # 동일한 방식) — progress_bar_pos=="top" 이면 나중에 pb_y 에 더하고,
+        # "bottom" 이면 H 대신 H-stack_shift 를 넘긴다. title_caption 이 꺼져
+        # 있거나(gate 자체가 title_caption 활성을 요구) pos="auto" 면 stack_shift
+        # 는 항상 0 이라 완전히 no-op.
+        pb_H = H - stack_shift if progress_bar_pos == "bottom" else H
         margin_x, bar_w, bar_h, pb_y = progress_bar_geometry(
-            W, H, scale, progress_bar_pos)
-        accent = norm_hex((viz_colors or [None])[0], DEFAULT_VIZ_COLORS[0])
+            W, pb_H, scale, progress_bar_pos)
+        if progress_bar_pos == "top":
+            pb_y += stack_shift
+        # --progress-bar-color 로 명시하면 그 색을 그대로 쓰고(파형 색과 독립),
+        # 안 주면(None/빈값/잘못된 hex) 기존처럼 viz_colors[0] 유도값으로 폴백한다
+        # — 순수 additive 변경, progress_bar_color 를 안 주는 기존 호출부는 완전히
+        # 동일한 동작을 유지한다.
+        accent = norm_hex(progress_bar_color, None) or norm_hex(
+            (viz_colors or [None])[0], DEFAULT_VIZ_COLORS[0])
         ar, ag, ab = int(accent[0:2], 16), int(accent[2:4], 16), int(accent[4:6], 16)
         fill_expr = f"{bar_w}*clip(T/{duration:.3f},0,1)"
         track_a = pill_alpha_expr(bar_w, bar_h, 0.30)
@@ -1807,6 +2193,9 @@ def main():
     ap.add_argument("--disc-lp-art",
                      help="lp_vinyl 테마 전용: LP판 라벨에 쓸 별도 이미지 "
                           "(기본: 지정 안 하면 --disc-art 와 같은 이미지를 그대로 사용)")
+    ap.add_argument("--disc-lp-side", choices=["left", "right"], default="right",
+                     help="lp_vinyl 테마 전용: 비닐이 커버 뒤로 삐져나오는 방향 "
+                          "(기본 right=오른쪽, left=왼쪽으로 미러링)")
     ap.add_argument("--disc-bg-style", choices=["off", "glow", "radial"], default="off",
                     help="레코드 모드 배경: glow=앨범아트 블러+글로우로 배경 전체 대체, "
                          "radial=디스크 뒤 컬러 헤일로가 음악(RMS)에 반응해 반짝임")
@@ -1820,11 +2209,18 @@ def main():
     ap.add_argument("--disc-ring-text", default=None,
                     help="text_ring 테마 전용: 원형으로 도는 문구 "
                          "(기본: 제목/아티스트 또는 자동 문구, --disc-theme text_ring 일 때만 사용)")
+    ap.add_argument("--disc-ring-side", choices=["left", "right"], default="left",
+                     help="text_ring 테마 전용: 텍스트 링이 커버 뒤로 삐져나오는 방향 "
+                          "(기본 left=왼쪽, right=오른쪽으로 미러링). --disc-lp-side 와는 "
+                          "별개의 독립된 옵션(테마도 다름)")
     ap.add_argument("--progress-bar", action="store_true",
                     help="곡 진행바(둥근 알약 트랙 + 진행 필, 파형 색과 통일). "
                          "위치는 --progress-bar-pos 로 선택 (기본 하단)")
     ap.add_argument("--progress-bar-pos", choices=["top", "bottom"], default="bottom",
                     help="진행바 위치: bottom=하단(기본, 기존 동작), top=상단")
+    ap.add_argument("--progress-bar-color", default=None, metavar="RRGGBB",
+                    help="진행바 채움 색(hex). 지정 안 하면 --viz-color[0] "
+                         "(파형 색)을 그대로 따라간다(기본, 기존 동작)")
     # 가사 싱크
     ap.add_argument("--align", choices=["none", "auto"], default="none",
                     help="auto: stable-ts 로 가사 강제정렬")
@@ -1849,9 +2245,12 @@ def main():
                     help="곡 제목/아티스트를 전체 재생시간 내내 고정 노출 "
                          "(--title/--artist 가 있어도 자동으로 켜지지 않음, 명시적 opt-in). "
                          "레코드 모드면 디스크 바로 아래, 아니면 화면 상단")
-    ap.add_argument("--title-caption-pos", choices=["auto", "top"], default="auto",
+    ap.add_argument("--title-caption-pos", choices=["auto", "top", "bottom"], default="auto",
                     help="--title-caption 위치: auto=레코드 모드면 디스크 바로 아래·"
-                         "아니면 화면 상단(기본), top=레코드 모드여도 항상 화면 상단")
+                         "아니면 화면 상단(기본), top=레코드 모드여도 항상 화면 상단, "
+                         "bottom=항상 화면 하단(진행바가 --progress-bar-pos bottom 이면 "
+                         "같은 묶음으로 타이트하게 붙는다). top/bottom 은 디스크를 남은 "
+                         "세로 공간의 중앙으로 재배치하고 필요시 축소한다")
     ap.add_argument("--interlude-note", action="store_true",
                     help="가사 없는 긴 구간(간주)에 ♪ 표시")
     ap.add_argument("--keep-ass", action="store_true")
@@ -1978,6 +2377,26 @@ def main():
     if args.disc:
         art = args.disc_art or (args.bg[0] if args.bg else None)
         D = disc_diameter(lay)
+        # 세로 오버플로 방지 축소: render() 의 disc_active 분기와 반드시 같은
+        # disc_avail_zone()/disc_shrink_factor() 를 호출해야 한다 — 이 프리패스가
+        # 굽는 PNG 픽셀 크기(D/D_lp/VD/RD)와 render() 의 오버레이 배치 크기가
+        # 어긋나면(따로 계산 시 흔한 함정) 크기가 안 맞는 결과가 나온다
+        # (LP_VINYL_SIZE_SCALE 프리패스/오버레이 공식 불일치와 동일한 종류의 함정 —
+        # 위 disc_shrink_factor() 주석 참고). --title-caption-pos/--progress-bar-pos
+        # 등 CLI 인자를 그대로 넘겨 render() 호출 시 쓰일 값과 동일하게 맞춘다.
+        # theme 인자는 항상 "classic" 고정 — 커버 크기 기준을 테마와 무관하게
+        # 하나로 통일하기 위함(render() 의 동일한 disc_shrink_factor 호출부 주석
+        # 참고). args.disc_theme 을 넘기면 테마마다 이 D 자체가 달라져 커버 크기가
+        # 테마별로 들쭉날쭉해지는 버그가 있었다.
+        avail_top, avail_bottom, _, _ = disc_avail_zone(
+            lay["H"], lay["W"], scale, args.title_caption, args.title_caption_pos,
+            bool(args.title or args.artist), args.progress_bar, args.progress_bar_pos,
+            render_dur)
+        shrink = disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+        if shrink < 1.0:
+            D = int(D * shrink)
+            D -= D % 2
+            D = max(D, 2)
         accent = norm_hex((args.viz_color or [None])[0], DEFAULT_VIZ_COLORS[0])
         if not art or not os.path.exists(art):
             # 앨범아트가 전혀 없어도 레코드 모드가 그대로 동작하도록 기본 커버로
@@ -2062,6 +2481,7 @@ def main():
            viz_colors=args.viz_color, bg_style=args.bg_style, bg_grad=args.bg_grad,
            scrim=scrim, disc_png=disc_png, progress_bar=args.progress_bar,
            progress_bar_pos=args.progress_bar_pos,
+           progress_bar_color=args.progress_bar_color,
            sparkle=args.sparkle, outro_cta=args.outro_cta,
            outro_cta_text=args.outro_cta_text,
            disc_bg_style=args.disc_bg_style, disc_theme=args.disc_theme,
@@ -2069,7 +2489,8 @@ def main():
            cover_png=cover_png, vinyl_png=vinyl_png, ring_png=ring_png,
            title_caption=args.title_caption, cap_title=args.title or "",
            cap_artist=args.artist or "", title_caption_pos=args.title_caption_pos,
-           sub_pos=args.sub_pos, sub_size=args.sub_size)
+           sub_pos=args.sub_pos, sub_size=args.sub_size,
+           disc_lp_side=args.disc_lp_side, disc_ring_side=args.disc_ring_side)
 
     # 썸네일 (미리보기에선 생략)
     if args.title and args.preview_secs == 0:

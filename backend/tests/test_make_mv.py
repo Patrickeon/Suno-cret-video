@@ -215,23 +215,172 @@ def test_lp_vinyl_size_scale_only_affects_lp_vinyl_branches():
     assert "LP_VINYL_SIZE_SCALE" not in text_ring_render_branch
 
 
-def test_lp_vinyl_size_scale_enlarges_cover_relative_to_disc_diameter():
-    # 레퍼런스(sample/palylist_sample2.png, 일러스트 커버) 실측으로는 커버
-    # 높이/프레임 높이 ≈0.64 (SIZE_SCALE=1.5) 였으나, 실제 사용자 사진 커버로
-    # 렌더해보니(sample/playscreen.png) 조합 전체가 과하게 커 보인다는 피드백에
-    # 따라 SIZE_SCALE 을 1.3 으로 낮췄다 — 그래도 disc_diameter() 기본값(≈0.42)
-    # 보다는 뚜렷이 커야 한다(>1.0배 확대라는 의도 자체는 유지).
-    import pytest
-    assert mv.LP_VINYL_SIZE_SCALE > 1.0
+def test_lp_vinyl_size_scale_matches_other_themes_cover_baseline():
+    """제품 오너 피드백: 테마를 바꿔가며 비교해보니 lp_vinyl 만 앨범 커버 자체가
+    다른 세 테마(classic/text_ring/square_spin)보다 눈에 띄게 커 보였다 —
+    "앨범 크기"는 테마와 무관하게 일관돼야 한다(비닐이 커버 뒤로 삐져나오는 건
+    별개의 장식 요소이지 커버 확대가 아니다). LP_VINYL_SIZE_SCALE 을 1.3 -> 1.0
+    으로 되돌려 커버 베이스라인(D_lp)이 다른 테마의 커버 베이스라인(D, 확대
+    없음)과 정확히 같아졌는지 확인한다.
+
+    이 테스트는 예전 test_lp_vinyl_size_scale_enlarges_cover_relative_to_disc_diameter
+    의 의도적 대체다 — 그 쪽은 "SIZE_SCALE>1.0 으로 커버를 확대하는 게 옳다"는
+    이제는 폐기된 디자인 가정을 검증했다(라운드 1~3 의 disc_gap 24px 테스트가
+    새 지오메트리로 교체됐던 것과 같은 종류의 의도적 교체)."""
+    assert mv.LP_VINYL_SIZE_SCALE == 1.0
     lay = mv.get_layout(False)
     D = mv.disc_diameter(lay)
     D_lp = int(D * mv.LP_VINYL_SIZE_SCALE)
     D_lp -= D_lp % 2
-    ratio_before = D / lay["H"]
-    ratio_after = D_lp / lay["H"]
-    assert ratio_before == pytest.approx(0.419, abs=0.01)
-    assert ratio_after == pytest.approx(0.545, abs=0.03)
-    assert ratio_after > ratio_before  # 여전히 기본 disc_diameter() 보다는 크다
+    # D 자체가 이미 짝수(disc_diameter() 가 홀수면 -1 해 짝수로 맞춤)이므로
+    # 1.0 배 곱셈 후에도 정확히 같아야 한다(반올림 오차조차 없어야 함).
+    assert D_lp == D
+
+
+def test_all_four_disc_themes_bake_cover_png_at_same_baseline_size():
+    """main() 프리패스가 실제로 4 개 disc_theme 모두에서 커버(원형이든 정사각이든)
+    PNG 를 동일한 D 기준으로 굽는지 소스 레벨로 확인한다 — classic/square_spin 은
+    make_disc_png(art, disc_png, D)/make_square_png(art, disc_png, D), text_ring 은
+    make_square_png(art, cover_png, D), lp_vinyl 은 make_square_png(art, cover_png,
+    D_lp) 인데 D_lp==D(위 테스트) 이므로 넷 다 결국 같은 D 로 커버를 굽는다."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+
+    lp_branch = main_src.split('if args.disc_theme == "lp_vinyl":')[1].split(
+        'elif args.disc_theme == "text_ring":')[0]
+    assert "make_square_png(art, cover_png, D_lp)" in lp_branch
+
+    text_ring_branch = main_src.split('elif args.disc_theme == "text_ring":')[1].split(
+        'elif args.disc_theme == "square_spin":')[0]
+    assert "make_square_png(art, cover_png, D)" in text_ring_branch
+
+    square_spin_branch = main_src.split('elif args.disc_theme == "square_spin":')[1].split(
+        "else:")[0]
+    assert "make_square_png(art, disc_png, D)" in square_spin_branch
+
+    classic_branch = main_src.split('elif args.disc_theme == "square_spin":')[1].split(
+        "else:")[1].split("\n\n")[0]
+    assert "make_disc_png(art, disc_png, D)" in classic_branch
+
+
+def test_render_disc_shrink_factor_uses_classic_reference_not_active_theme():
+    """render() 의 disc_active 분기가 커버 크기 축소(shrink)를 계산할 때 활성
+    disc_theme 이 아니라 항상 "classic"(=D 그대로, 확장 없음) 기준으로 호출하는지
+    소스 레벨로 확인한다. 활성 테마를 그대로 넘기면(과거 코드) text_ring/
+    square_spin 처럼 확장 배율이 큰 테마가 같은 예약 영역에서도 classic/lp_vinyl
+    보다 더 많이 축소되어, 테마를 바꾸면 커버 "크기"가 들쭉날쭉해지는 버그가
+    있었다(제품 오너 피드백)."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    disc_branch = render_src.split("if disc_active:")[1].split(
+        "if disc_bg_style ==")[0]
+    assert 'disc_shrink_factor(D, avail_top, avail_bottom, "classic")' in disc_branch
+    # cy/앵커 계산(round 6: disc_stack_layout())도 활성 테마의 확장치가 아니라
+    # 공용 D 를 그대로 받아써야 한다(disc_theme_max_extent(D, disc_theme) 를
+    # 다시 쓰면 앵커 지점 자체가 테마마다 달라지는 버그가 재발한다)
+    assert "disc_stack_layout(" in disc_branch
+    # (주석에는 disc_theme_max_extent(D, disc_theme) 가 "왜 안 쓰는지" 설명하려고
+    # 등장할 수 있으므로, 실제 호출 형태(// 로 이어지는 코드)만 부재를 확인한다)
+    assert "disc_theme_max_extent(D, disc_theme) //" not in disc_branch
+
+
+def test_main_prepass_disc_shrink_factor_uses_classic_reference():
+    """main() 프리패스도 render() 와 동일하게 커버 크기 축소를 "classic" 기준
+    하나로 통일해서 호출하는지 확인한다(그렇지 않으면 프리패스가 굽는 PNG 크기와
+    render() 오버레이 크기가 테마별로 다시 어긋난다)."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+    assert 'disc_shrink_factor(D, avail_top, avail_bottom, "classic")' in main_src
+
+
+def test_cover_size_and_cy_are_identical_across_all_four_disc_themes():
+    """핵심 회귀 테스트: 같은 H/W/avail_top/avail_bottom 입력에 대해, 커버 크기
+    축소(D)와 중심(cy)이 disc_theme 값과 무관하게 완전히 동일해야 한다 — 순수
+    함수 조합만으로 render() 의 실제 계산을 재현해 직접 비교한다(프레임 픽셀
+    측정보다 이런 버그를 더 확실하게 잡는다). 일부러 커버가 실제로 축소되는
+    좁은 avail 구간(전에는 테마별로 다르게 축소되던 상황)에서 검증한다."""
+    lay = mv.get_layout(False, 1.0)
+    W, H = lay["W"], lay["H"]
+    D_base = mv.disc_diameter(lay)
+
+    scenarios = [
+        ("no reservation", mv.disc_avail_zone(
+            H, W, 1.0, False, "auto", False, False, "bottom", None)),
+        ("both edges reserved", mv.disc_avail_zone(
+            H, W, 1.0, True, "top", True, True, "bottom", 8.0)),
+        ("single edge (top) reserved", mv.disc_avail_zone(
+            H, W, 1.0, True, "top", True, True, "top", 8.0)),
+        ("tight synthetic zone", (400, 700, True, False)),  # avail_top,bottom,top_r,bottom_r
+    ]
+
+    for label, (avail_top, avail_bottom, top_reserved, bottom_reserved) in scenarios:
+        results = {}
+        for theme in ("classic", "lp_vinyl", "text_ring", "square_spin"):
+            shrink = mv.disc_shrink_factor(D_base, avail_top, avail_bottom, "classic")
+            D = D_base
+            if shrink < 1.0:
+                D = int(D_base * shrink)
+                D -= D % 2
+                D = max(D, 2)
+            if top_reserved and bottom_reserved:
+                cy = (avail_top + avail_bottom) // 2
+            elif top_reserved:
+                cy = avail_top + D // 2
+            elif bottom_reserved:
+                cy = avail_bottom - D // 2
+            else:
+                cy = int(H * 0.30) if H > W else int(H * 0.36)
+            results[theme] = (D, cy)
+        values = set(results.values())
+        assert len(values) == 1, (label, results)
+
+
+def test_decoration_never_clips_past_literal_frame_edges():
+    """제품 오너 방침: 예약 마진(DISC_RESERVED_GAP 등)은 테마별 장식이 살짝
+    넘어가도 괜찮지만(의도된 트레이드오프), 실제 프레임 경계(y=0/H)는 절대
+    넘으면 안 된다. 커버 크기를 테마 무관 "classic" 기준으로 통일하면서
+    테마별 장식(RD=D*TEXT_RING_SCALE, D*sqrt(2))이 더 이상 자체적으로
+    축소되지 않게 됐으므로, 여러 스케일/방향/예약 조합에서 가장 큰 확장
+    배율(square_spin, sqrt(2))을 가진 장식도 프레임을 벗어나지 않는지
+    전수 조사한다 — 벗어나는 조합이 하나라도 있으면 별도의 안전장치가
+    필요하다는 뜻이라 이 테스트가 그것을 잡아낸다."""
+    import math
+
+    def worst_case(shorts, scale, cap_pos, pb_pos, pb_on):
+        lay = mv.get_layout(shorts, scale)
+        W, H = lay["W"], lay["H"]
+        D_base = mv.disc_diameter(lay)
+        avail_top, avail_bottom, top_r, bottom_r = mv.disc_avail_zone(
+            H, W, scale, True, cap_pos, True, pb_on, pb_pos, 8.0)
+        shrink = mv.disc_shrink_factor(D_base, avail_top, avail_bottom, "classic")
+        D = D_base
+        if shrink < 1.0:
+            D = int(D_base * shrink)
+            D -= D % 2
+            D = max(D, 2)
+        if top_r and bottom_r:
+            cy = (avail_top + avail_bottom) // 2
+        elif top_r:
+            cy = avail_top + D // 2
+        elif bottom_r:
+            cy = avail_bottom - D // 2
+        else:
+            cy = int(H * 0.30) if H > W else int(H * 0.36)
+        RD = int(math.ceil(D * math.sqrt(2)))
+        RD += RD % 2
+        half = RD // 2
+        return cy - half, cy + half, H
+
+    for shorts in (False, True):
+        for scale in (1.0, 2 / 3, 1.333, 2.0, 0.4):
+            for cap_pos in ("top", "bottom"):
+                for pb_pos in ("top", "bottom"):
+                    for pb_on in (True, False):
+                        top_edge, bottom_edge, H = worst_case(
+                            shorts, scale, cap_pos, pb_pos, pb_on)
+                        assert top_edge >= 0, (shorts, scale, cap_pos, pb_pos, pb_on, top_edge)
+                        assert bottom_edge <= H, (
+                            shorts, scale, cap_pos, pb_pos, pb_on, bottom_edge, H)
 
 
 def test_progress_bar_geometry_bottom_vs_top():
@@ -265,6 +414,44 @@ def test_progress_bar_geometry_is_narrow_and_centered():
         assert 0.20 <= ratio <= 0.35, (W, H, ratio)
         # 좌우 여백이 같아야 가운데 정렬(margin_x*2 + bar_w == W, 반올림 오차 허용)
         assert abs((margin_x * 2 + bar_w) - W) <= 1
+
+
+def test_render_progress_bar_color_override_source():
+    """render() 의 진행바 색 결정이 --progress-bar-color(progress_bar_color 인자)
+    를 우선하고, 없거나 잘못된 값이면 기존처럼 viz_colors[0] 유도값으로 폴백하는지
+    소스 레벨로 확인한다(순수 additive 변경 — progress_bar_color 를 안 주는 기존
+    호출부는 완전히 동일하게 동작해야 함)."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    pb_branch = render_src.split("if progress_bar and duration:")[1].split(
+        "# ---- 진행 위치 손잡이")[0]
+    assert "accent = norm_hex(progress_bar_color, None) or norm_hex(" in pb_branch
+
+
+def test_progress_bar_color_override_wins_when_valid_else_falls_back():
+    """render() 의 accent 결정 체인(norm_hex(progress_bar_color, None) or
+    norm_hex(viz_colors[0], DEFAULT_VIZ_COLORS[0]))을 순수 계산으로 재현해:
+    유효한 override 가 있으면 그걸 쓰고, override 가 없거나(None) 잘못된 hex 면
+    기존과 동일하게 viz_colors[0] 유도값(또는 DEFAULT_VIZ_COLORS[0])으로 폴백하는지
+    확인한다."""
+    viz_colors = ["00FF00"]
+
+    def accent_for(progress_bar_color, viz_colors):
+        return mv.norm_hex(progress_bar_color, None) or mv.norm_hex(
+            (viz_colors or [None])[0], mv.DEFAULT_VIZ_COLORS[0])
+
+    assert accent_for("FF0000", viz_colors) == "FF0000"          # 유효한 override 우선
+    assert accent_for(None, viz_colors) == "00FF00"               # override 없음 -> 기존 폴백
+    assert accent_for("", viz_colors) == "00FF00"                 # override 빈 문자열 -> 기존 폴백
+    assert accent_for("bad", viz_colors) == "00FF00"              # override 잘못된 hex -> 기존 폴백
+    assert accent_for(None, None) == mv.DEFAULT_VIZ_COLORS[0]     # 아무것도 없음 -> 완전 기본값
+
+
+def test_progress_bar_color_cli_flag_declared():
+    """--progress-bar-color 가 argparse 에 선언되어 있는지 확인."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+    assert '"--progress-bar-color"' in main_src
 
 
 def test_pill_alpha_expr_static_track_has_no_time_var():
@@ -816,46 +1003,594 @@ def test_title_caption_geometry_auto_pos_ignores_progress_bar_args():
     assert with_pb == without_pb
 
 
-def test_render_reserves_top_zone_for_disc_when_caption_and_progress_bar_both_top():
-    """render() 소스가 실제로 이 예약 로직을 구현하는지(디스크 cy 를 화면
-    전체가 아니라 예약 영역 아래 남은 공간의 중앙으로 다시 잡는지) 확인.
-    pos="auto" 이거나 진행바가 꺼져 있으면 이 블록이 아예 실행되지 않아
-    기존 cy 공식(base_cy)이 그대로 유지된다."""
+# ---------- pos="bottom" (신규): pos="top" 의 상하 대칭 -------------------------
+
+def test_title_caption_geometry_bottom_pos_anchors_near_bottom_edge_when_no_progress_bar():
+    """진행바가 없으면(혹은 bottom 이 아니면) 아티스트 하단이 화면 하단에서
+    40*scale 만큼 떨어진 지점에 자연 착지한다 — pos="top" 의 고정 40*scale
+    시작값과 대칭되는 기본 여백."""
+    scale = 1.0
+    H = 1080
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        False, 0, 0, H, scale, pos="bottom")
+    art_bottom = ttl_y + art_gap + art_fs
+    assert art_bottom == H - int(round(40 * scale))
+    assert ttl_y < art_bottom  # 제목이 아티스트보다 위(읽는 순서 유지)
+
+
+def test_title_caption_geometry_bottom_pos_clears_bottom_progress_bar_when_both_given():
+    """--title-caption-pos bottom --progress-bar --progress-bar-pos bottom 조합:
+    캡션 블록이 진행바 바로 위(GAP=23*scale 여백)에 타이트하게 붙어야 하고,
+    진행바 트랙과 절대 겹치면 안 된다."""
+    scale = 1.0
+    W, H = 1920, 1080
+    _, _, pb_h, pb_y = mv.progress_bar_geometry(W, H, scale, "bottom")
+    ttl_fs, art_fs, ttl_y, art_gap = mv.title_caption_geometry(
+        False, 0, 0, H, scale, pos="bottom",
+        W=W, progress_bar=True, progress_bar_pos="bottom")
+    art_bottom = ttl_y + art_gap + art_fs
+    gap = int(round(23 * scale))
+    assert art_bottom == pb_y - gap  # 진행바 바로 위, 타이트 간격
+    assert art_bottom <= pb_y  # 겹치지 않음
+    # 진행바가 없을 때보다 뚜렷이 위로 밀려 올라가야 한다(진행바가 화면 맨 아래를 차지)
+    no_pb_art_bottom = H - int(round(40 * scale))
+    assert art_bottom < no_pb_art_bottom
+
+
+def test_title_caption_geometry_bottom_pos_unaffected_when_progress_bar_off():
+    """회귀 방지: progress_bar=False 면 W 를 줘도 진행바 없는 기본값과 동일해야
+    한다."""
+    scale = 1.0
+    W, H = 1920, 1080
+    with_w = mv.title_caption_geometry(
+        False, 0, 0, H, scale, pos="bottom", W=W, progress_bar=False)
+    without_w = mv.title_caption_geometry(False, 0, 0, H, scale, pos="bottom")
+    assert with_w == without_w
+
+
+def test_title_caption_geometry_bottom_pos_unaffected_when_progress_bar_at_top():
+    """회귀 방지: 진행바가 top 이면 bottom 캡션과 애초에 안 겹치므로 보정이
+    적용되지 않아야 한다."""
+    scale = 1.0
+    W, H = 1920, 1080
+    with_pb_top = mv.title_caption_geometry(
+        False, 0, 0, H, scale, pos="bottom",
+        W=W, progress_bar=True, progress_bar_pos="top")
+    without_pb = mv.title_caption_geometry(False, 0, 0, H, scale, pos="bottom")
+    assert with_pb_top == without_pb
+
+
+def test_title_caption_geometry_top_and_bottom_pos_use_tight_twentythree_px_gaps():
+    """제품 오너 피드백: pos="top"/"bottom" 의 제목-아티스트(및 진행바-캡션) 간격은
+    기존 ttl_fs*1.6(auto 전용, ≈99px)이 아니라 타이트한 GAP 값이어야 한다. 10px 로
+    시작해 18px 로 한 차례, 실제 렌더 리뷰 후 재요청으로 23px 로 한 번 더 소폭
+    확대됐다(DISC_RESERVED_GAP=32px 디스크↔캡션 간격은 이 조정과 무관, 그대로).
+    pos="auto" 는 절대 안 바뀐다."""
+    scale = 1.0
+    H = 1080
+    _, _, _, art_gap_top = mv.title_caption_geometry(False, 0, 0, H, scale, pos="top")
+    _, _, _, art_gap_bottom = mv.title_caption_geometry(False, 0, 0, H, scale, pos="bottom")
+    _, _, _, art_gap_auto = mv.title_caption_geometry(
+        True, 400, 324, H, scale, pos="auto")
+    ttl_fs = int(round(62 * scale))
+    gap = int(round(23 * scale))
+    assert art_gap_top == ttl_fs + gap
+    assert art_gap_bottom == ttl_fs + gap
+    assert art_gap_auto == int(round(ttl_fs * 1.6))  # auto 는 절대 안 바뀜(회귀 방지)
+    assert art_gap_top < art_gap_auto  # 훨씬 촘촘해야 한다
+    # 여전히 이전 라운드(18px)보다는 넉넉해야 한다(이번 후속 조정의 핵심)
+    assert gap > int(round(18 * scale))
+    # DISC_RESERVED_GAP(디스크↔캡션 앵커 간격)은 이번 조정과 무관하게 그대로여야 함
+    assert mv.DISC_RESERVED_GAP == 32
+
+
+def test_render_disc_active_uses_new_bidirectional_reservation_helpers():
+    """render() 소스가 새 양방향 예약/축소 순수 함수(disc_avail_zone,
+    disc_shrink_factor)를 실제로 호출하는지 확인. 예전에는 top+top 전용, 24px
+    고정 disc_gap 하드코딩이었으나(디자인 재작업으로 폐기), 이제는 양쪽 변을
+    대칭으로 다루는 공용 헬퍼로 cy 재중앙정렬 + D 축소를 함께 처리한다.
+    pos="auto" 이거나 캡션이 꺼져 있으면 disc_avail_zone() 이 reserved=False 를
+    돌려주므로 cy 는 여전히 기존 base_cy 그대로 유지된다(회귀 방지)."""
     import inspect
     render_src = inspect.getsource(mv.render)
     disc_branch = render_src.split("if disc_active:")[1].split(
         "if disc_bg_style ==")[0]
     assert "base_cy" in disc_branch
-    assert "reserved_bottom" in disc_branch
-    assert 'title_caption_pos == "top"' in disc_branch
-    assert "pb_will_draw" in disc_branch
+    assert "disc_avail_zone(" in disc_branch
+    assert "disc_shrink_factor(" in disc_branch
+    assert "reserved" in disc_branch
 
 
-def test_disc_top_zone_reservation_math_moves_disc_below_reserved_area():
-    """render() 와 동일한 예약 공식을 순수 함수 조합으로 재현해, 디스크 중심(cy)
-    이 실제로 예약 영역보다 아래로 내려가고, 커버 상단이 예약 영역과 겹치지
-    않는지 확인 — 버그 재현 치수(1280x720, --preview-secs 스케일).
-    """
+def test_main_prepass_uses_same_avail_zone_and_shrink_helpers_as_render():
+    """CRITICAL GOTCHA 회귀 테스트: main() 의 PNG 프리패스(_cover.png 등 굽는 곳)가
+    render() 의 오버레이 배치와 반드시 같은 disc_avail_zone()/disc_shrink_factor()
+    호출로 D 를 축소해야 한다 — 한쪽만 축소하고 한쪽은 안 하면(혹은 각자 따로
+    구현하면) 베이크된 PNG 픽셀 크기와 오버레이 배치 크기가 어긋나 결과물이
+    깨진다(LP_VINYL_SIZE_SCALE 프리패스/오버레이 공식 불일치와 동일한 종류의
+    함정). 소스에 두 헬퍼 호출이 모두 있는지 양쪽 함수에서 확인한다."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+    render_src = inspect.getsource(mv.render)
+    assert "disc_avail_zone(" in main_src
+    assert "disc_shrink_factor(" in main_src
+    assert "disc_avail_zone(" in render_src
+    assert "disc_shrink_factor(" in render_src
+
+
+# ---------- round 6: 상/하단 묶음 + 디스크 스택 전체 중앙정렬 ----------------------
+
+def test_main_prepass_does_not_need_disc_stack_layout():
+    """round 6 로 추가된 disc_stack_layout() 은 render() 의 오버레이 y 좌표(캡션/
+    진행바 실제 draw 위치, 디스크 cy)만 결정한다 — main() 의 프리패스는 PNG
+    "크기"(D/D_lp/VD/RD)만 구우면 되고 y 좌표는 전혀 계산하지 않으므로 이 함수를
+    알 필요가 없다. 이 가정이 깨지면(누군가 main() 에도 disc_stack_layout 호출을
+    추가하면) 오히려 round 1 이 막았던 프리패스/오버레이 불일치 종류의 버그를
+    다시 만들 위험이 있으므로, 프리패스가 이 함수를 쓰지 않는다는 것 자체를
+    회귀 테스트로 고정한다."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+    render_src = inspect.getsource(mv.render)
+    assert "disc_stack_layout(" not in main_src
+    assert "disc_stack_layout(" in render_src
+
+
+def test_render_disc_active_branch_calls_disc_stack_layout_for_cy():
+    """render() 의 disc_active 분기가 (옛 anchor-only if/elif 사슬 대신) 새
+    disc_stack_layout() 을 호출해 cy 를 구하는지 소스 레벨로 확인한다."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    disc_branch = render_src.split("if disc_active:")[1].split(
+        "if disc_bg_style ==")[0]
+    assert "disc_stack_layout(" in disc_branch
+    assert "stack_shift" in disc_branch
+
+
+def test_render_caption_and_progress_bar_draw_calls_apply_stack_shift():
+    """CRITICAL 상호일관성 회귀 테스트(round 6 보고에서 지적된 "예측 vs 실제
+    그리기" 어긋남 부류의 버그): 디스크 cy 계산에 쓰인 것과 같은 stack_shift
+    변수를, 실제 캡션/진행바를 그리는 두 draw 호출부도 반드시 참조해야 한다 —
+    그렇지 않으면 디스크만 중앙으로 옮겨지고 캡션/진행바는 여전히 프레임
+    가장자리에 붙어버린다(디스크와 캡션이 서로 어긋나 보임). 하나의 stack_shift
+    변수를 세 곳(cy 계산, 캡션 draw, 진행바 draw)이 공유하는 구조이므로("한 번
+    계산해서 여러 곳에 꽂는" 방식) 자연히 lockstep 이 보장된다."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+
+    caption_branch = render_src.split(
+        'if title_caption and (cap_title or cap_artist):')[1].split(
+        "# ---- 간주")[0]
+    assert "stack_shift" in caption_branch
+
+    pb_branch = render_src.split("if progress_bar and duration:")[1].split(
+        "# ---- 진행 위치 손잡이")[0]
+    assert "stack_shift" in pb_branch
+
+
+def test_disc_stack_layout_never_used_to_grow_or_shrink_disc_size():
+    """round 5 는 디스크 SIZING(테마 무관, "classic" 기준)과 round 6 은 디스크
+    POSITIONING(스택 중앙정렬)을 다룬다 — 서로 직교해야 한다. disc_stack_layout()
+    이 받는 D 는 이미 disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+    로 축소가 끝난 뒤의 값이어야 하고, disc_stack_layout() 자신은 D 를 절대
+    변형하지 않아야 한다(입력 그대로 cy 계산에만 사용, 반환값에 D 자체는 아예
+    없음) — 즉 "중앙정렬된 여유 공간을 채우려고 디스크를 다시 키우는" 경로가
+    없어야 한다."""
+    import inspect
+    src = inspect.getsource(mv.disc_stack_layout)
+    # 함수 시그니처에 D 는 입력으로만 등장하고, 반환문(return)에는 D 를 가공한
+    # 새 크기 값이 없어야 한다(반환은 stack_shift, cy 두 값뿐).
+    assert "return stack_shift, cy" in src
+    assert "D =" not in src  # D 를 재대입(축소/확대)하는 코드가 전혀 없어야 함
+
+    render_src = inspect.getsource(mv.render)
+    disc_branch = render_src.split("if disc_active:")[1].split(
+        "if disc_bg_style ==")[0]
+    # disc_shrink_factor() 호출(사이징)은 disc_stack_layout() 호출(포지셔닝)보다
+    # 먼저 나와야 한다 — D 가 이미 확정된 뒤에 포지셔닝이 그 값을 그대로 받아씀.
+    assert disc_branch.index('disc_shrink_factor(D, avail_top, avail_bottom, "classic")') < \
+        disc_branch.index("disc_stack_layout(")
+
+
+def test_disc_stack_layout_scenario_caption_only_bottom_matches_bug_report():
+    """(a) 버그 재현 설정: lp_vinyl, --title-caption-pos bottom, 진행바 없음
+    (sample/screen.png). 디스크 위쪽 바깥 여백과 하단 캡션 묶음 아래쪽 바깥
+    여백이 같아야 한다(반올림 오차 1px 허용)."""
+    W, H = 1920, 1080
+    avail_top, avail_bottom, top_r, bottom_r = mv.disc_avail_zone(
+        H, W, 1.0, True, "bottom", True, False, "bottom", None)
+    assert (top_r, bottom_r) == (False, True)
+    D = mv.disc_diameter(mv.get_layout(False))
+    shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+    if shrink < 1.0:
+        D = int(D * shrink)
+        D -= D % 2
+    reserved_top, reserved_bottom = mv.disc_vertical_reservation(
+        H, 1.0, True, "bottom", True, False, "bottom", W)
+    stack_shift, cy = mv.disc_stack_layout(
+        H, 1.0, reserved_top, reserved_bottom, top_r, bottom_r, D)
+    half = D // 2
+    disc_top = cy - half
+    margin_above_disc = disc_top
+    margin_below_group = stack_shift
+    assert abs(margin_above_disc - margin_below_group) <= 1
+    assert margin_above_disc > 50  # 실제로 눈에 띄는 대칭 여백이 있어야 의미있는 검증
+
+
+def test_disc_stack_layout_scenario_caption_only_top_mirrors_bottom():
+    """(b) 캡션-only-top(진행바 없음): (a) 의 상하 대칭 케이스."""
+    W, H = 1920, 1080
+    avail_top, avail_bottom, top_r, bottom_r = mv.disc_avail_zone(
+        H, W, 1.0, True, "top", True, False, "bottom", None)
+    assert (top_r, bottom_r) == (True, False)
+    D = mv.disc_diameter(mv.get_layout(False))
+    shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+    if shrink < 1.0:
+        D = int(D * shrink)
+        D -= D % 2
+    reserved_top, reserved_bottom = mv.disc_vertical_reservation(
+        H, 1.0, True, "top", True, False, "bottom", W)
+    stack_shift, cy = mv.disc_stack_layout(
+        H, 1.0, reserved_top, reserved_bottom, top_r, bottom_r, D)
+    half = D // 2
+    disc_bottom = cy + half
+    margin_below_disc = H - disc_bottom
+    margin_above_group = stack_shift
+    assert abs(margin_below_disc - margin_above_group) <= 1
+    assert margin_below_disc > 50
+
+
+def test_disc_stack_layout_scenario_split_progress_top_caption_bottom():
+    """(c) 분리 케이스: 진행바 top + 캡션 bottom. 두 묶음 모두 예약되므로
+    disc_stack_layout() 은 스택 전체를 중앙정렬하되, 상단 묶음 위쪽 바깥 여백과
+    하단 묶음 아래쪽 바깥 여백이 서로 같아야 한다(둘 다 stack_shift)."""
+    W, H = 1920, 1080
+    avail_top, avail_bottom, top_r, bottom_r = mv.disc_avail_zone(
+        H, W, 1.0, True, "bottom", True, True, "top", 180.0)
+    assert (top_r, bottom_r) == (True, True)
+    D = mv.disc_diameter(mv.get_layout(False))
+    shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+    if shrink < 1.0:
+        D = int(D * shrink)
+        D -= D % 2
+    reserved_top, reserved_bottom = mv.disc_vertical_reservation(
+        H, 1.0, True, "bottom", True, True, "top", W)
+    stack_shift, cy = mv.disc_stack_layout(
+        H, 1.0, reserved_top, reserved_bottom, top_r, bottom_r, D)
+    # 상단 묶음의 실제(이동 후) 위쪽 바깥 여백은 stack_shift 그 자체(top 은
+    # +stack_shift 로 이동), 하단 묶음의 실제 아래쪽 바깥 여백도 stack_shift
+    # (bottom 은 H-stack_shift 기준) — 둘 다 같은 stack_shift 값이므로 자명하게
+    # 대칭이다. 여유가 실제로 있는지만 확인한다.
+    assert stack_shift >= 0
+    half = D // 2
+    assert cy - half >= 0 and cy + half <= H
+
+
+def test_disc_stack_layout_scenario_split_progress_bottom_caption_top():
+    """(d) 역방향 분리 케이스: 진행바 bottom + 캡션 top."""
+    W, H = 1920, 1080
+    avail_top, avail_bottom, top_r, bottom_r = mv.disc_avail_zone(
+        H, W, 1.0, True, "top", True, True, "bottom", 180.0)
+    assert (top_r, bottom_r) == (True, True)
+    D = mv.disc_diameter(mv.get_layout(False))
+    shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+    if shrink < 1.0:
+        D = int(D * shrink)
+        D -= D % 2
+    reserved_top, reserved_bottom = mv.disc_vertical_reservation(
+        H, 1.0, True, "top", True, True, "bottom", W)
+    stack_shift, cy = mv.disc_stack_layout(
+        H, 1.0, reserved_top, reserved_bottom, top_r, bottom_r, D)
+    assert stack_shift >= 0
+    half = D // 2
+    assert cy - half >= 0 and cy + half <= H
+
+
+def test_disc_stack_layout_returns_none_cy_when_nothing_reserved():
+    """회귀 방지 경계: top_reserved/bottom_reserved 가 둘 다 False 면(pos="auto"
+    이거나 캡션이 꺼져 있음) disc_stack_layout() 은 (0, None) 을 돌려줘야 한다 —
+    호출부가 cy=None 을 base_cy 폴백 신호로 쓸 수 있게."""
+    shift, cy = mv.disc_stack_layout(1080, 1.0, 0, 0, False, False, 452)
+    assert (shift, cy) == (0, None)
+
+
+def test_disc_stack_layout_sub_zone_clamp_prevents_caption_subtitle_overlap():
+    """Round 6 자체 검증 중 발견한 회귀(제품 오너가 보고한 버그는 아님): 스택
+    중앙정렬이 --title-caption-pos bottom 캡션 묶음을 안쪽(위)으로 옮기다가 —
+    특히 여유가 많을 때, 즉 원래 버그가 가장 심했던 상황에서 그대로 — 자막(가사)
+    안전영역과 겹쳐버렸다(실제 렌더로 재현 확인). sub_zone 을 넘기면 stack_shift
+    를 필요한 만큼만 줄여 겹침을 없애야 한다."""
+    W, H = 1920, 1080
+    lay = mv.get_layout(False, 1.0)
+    sub_zone = mv.subtitle_zone_y(lay, sub_pos="bottom", sub_size=1.0)
+    sub_top, sub_bottom = sub_zone
+
+    D = mv.disc_diameter(lay)
+    avail_top, avail_bottom, top_r, bottom_r = mv.disc_avail_zone(
+        H, W, 1.0, True, "bottom", True, False, "bottom", None)
+    shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+    if shrink < 1.0:
+        D = int(D * shrink)
+        D -= D % 2
+    reserved_top, reserved_bottom = mv.disc_vertical_reservation(
+        H, 1.0, True, "bottom", True, False, "bottom", W)
+
+    # 클램프 없이는 실제로 겹친다는 것부터 확인(이 테스트가 의미 있으려면 필요)
+    shift_noclamp, _ = mv.disc_stack_layout(
+        H, 1.0, reserved_top, reserved_bottom, top_r, bottom_r, D)
+    group_top_noclamp = H - reserved_bottom - shift_noclamp
+    assert group_top_noclamp < sub_bottom  # 겹침 재현
+
+    shift_clamped, cy_clamped = mv.disc_stack_layout(
+        H, 1.0, reserved_top, reserved_bottom, top_r, bottom_r, D, sub_zone=sub_zone)
+    sub_gap = int(round(16 * 1.0))
+    group_top_clamped = H - reserved_bottom - shift_clamped
+    assert group_top_clamped >= sub_bottom + sub_gap - 1  # 겹침 해소(반올림 오차 허용)
+    assert shift_clamped <= shift_noclamp  # 클램프는 이동량을 줄이기만 한다(늘리지 않음)
+    assert cy_clamped is not None
+
+
+def test_disc_stack_layout_sub_zone_none_is_backward_compatible():
+    """sub_zone 을 안 주면(기존 호출부, round 6 이전 테스트들) 기존과 완전히
+    동일한 결과여야 한다 — 새 클램프는 순수 additive."""
+    H, D = 1080, 452
+    without = mv.disc_stack_layout(H, 1.0, 150, 0, True, False, D)
+    with_none = mv.disc_stack_layout(H, 1.0, 150, 0, True, False, D, sub_zone=None)
+    assert without == with_none
+
+
+def test_disc_stack_layout_top_only_centers_whole_stack_not_just_anchors_disc():
+    """Round 6 회귀 테스트 — 이 테스트는 round 2/3 이 확립한 "단일 변 앵커"
+    가정을 의도적으로 대체한다(round 1/2 의 disc_gap 24px 테스트가 새 지오메트리로
+    교체됐던 것과 같은 종류의 교체). 예전 가정("한쪽 변만 예약되면 디스크를 그
+    경계에 DISC_RESERVED_GAP 만큼만 앵커하고 반대쪽엔 남는 여유를 전부 몰아넣는다")
+    자체가 이번 라운드에서 고쳐진 버그였다(sample/screen.png 재현: 캡션 반대쪽에
+    거대한 빈 공간). 새 동작: '진행바/캡션 묶음 + gap + 디스크'를 하나의 강체로
+    보고 프레임에서 정중앙 정렬 — 묶음 자체도 여유가 있으면 프레임 가장자리에서
+    안쪽으로 이동한다.
+
+    버그 재현 치수(1280x720, --preview-secs 스케일), --title-caption-pos top +
+    --progress-bar-pos top(단일 변)."""
     scale = 2 / 3
     lay = mv.get_layout(False, scale)
     W, H = lay["W"], lay["H"]
-    ttl_fs0, art_fs0, ttl_y0, art_gap0 = mv.title_caption_geometry(
-        False, 0, 0, H, scale, pos="top", sub_zone=None,
-        W=W, progress_bar=True, progress_bar_pos="top")
-    cap_bottom = ttl_y0 + art_gap0 + art_fs0
-    disc_gap = int(round(24 * scale))
-    reserved_bottom = cap_bottom + disc_gap
-    cy = reserved_bottom + (H - reserved_bottom) // 2
 
-    base_cy = int(H * 0.30)
-    assert cy != base_cy  # 고정 중앙값에서 실제로 밀려나야 한다
-    assert cy > reserved_bottom  # 남은 공간의 중앙이므로 예약 영역보다 아래
+    avail_top, avail_bottom, top_reserved, bottom_reserved = mv.disc_avail_zone(
+        H, W, scale, True, "top", True, True, "top", 180.0)
+    assert top_reserved is True
+    assert bottom_reserved is False  # 단일 변(top)만 예약
+
+    reserved_top, reserved_bottom = mv.disc_vertical_reservation(
+        H, scale, True, "top", True, True, "top", W)
+    reserved_gap = int(round(mv.DISC_RESERVED_GAP * scale))
 
     D = mv.disc_diameter(lay)
-    D_lp = int(D * mv.LP_VINYL_SIZE_SCALE)
-    D_lp -= D_lp % 2
-    disc_top = cy - D_lp // 2
-    assert disc_top >= reserved_bottom - 1  # 디스크 상단이 예약 영역을 침범하지 않음
+    shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+    if shrink < 1.0:
+        D = int(D * shrink)
+        D -= D % 2
+        D = max(D, 2)
+
+    stack_shift, cy = mv.disc_stack_layout(
+        H, scale, reserved_top, reserved_bottom, top_reserved, bottom_reserved, D)
+    assert cy is not None
+    base_cy = int(H * 0.30)
+    assert cy != base_cy  # 고정 중앙값에서 실제로 밀려나야 한다
+
+    half = D // 2
+    disc_top = cy - half
+    disc_bottom = cy + half
+    # 묶음(진행바)과 디스크 사이 간격은 여전히 타이트하게 DISC_RESERVED_GAP 만
+    # 유지되어야 한다(round 2/3 의 "붙지 않되 살짝만" 요구사항은 그대로 보존).
+    assert (disc_top - stack_shift) - reserved_top == reserved_gap
+    # 핵심 회귀 확인: 묶음 위쪽 여백(=stack_shift)과 디스크 아래쪽에서 프레임
+    # 바닥까지의 여백이 같아야 한다(전체 3-조각 스택이 프레임 중앙에 옴) — 예전
+    # 버그는 이 두 값이 전혀 다르며(위쪽 0, 아래쪽에 모든 여유가 쏠림) 재현됐었다.
+    assert disc_top >= avail_top - 1  # 디스크 상단이 예약 영역(+마진)을 침범하지 않음
+    assert (H - disc_bottom) == stack_shift
+    assert stack_shift > reserved_gap  # 실제로 남는 여유가 있어 이 검증이 의미있음
+
+
+def test_disc_avail_zone_auto_pos_never_reserves():
+    """회귀 방지 핵심 경계: title_caption_pos="auto" 면 캡션/진행바가 모두 켜져
+    있어도 disc_avail_zone() 은 절대 예약하지 않는다(양쪽 플래그 모두 False, 순수
+    프레임 마진만) — cy 는 기존 base_cy 그대로 유지되어야 한다."""
+    W, H = 1920, 1080
+    avail_top, avail_bottom, top_reserved, bottom_reserved = mv.disc_avail_zone(
+        H, W, 1.0, True, "auto", True, True, "top", 180.0)
+    assert top_reserved is False
+    assert bottom_reserved is False
+    margin = int(round(15 * 1.0))
+    assert (avail_top, avail_bottom) == (margin, H - margin)
+
+
+def test_disc_avail_zone_title_caption_off_never_reserves():
+    """회귀 방지: title_caption 자체가 꺼져 있으면(title_caption_on=False) pos 값과
+    무관하게 예약이 전혀 일어나지 않는다 — 진행바 단독으로는 cy 를 절대 흔들지
+    않는다(기존 disc+progress-bar-without-caption 사용자 회귀 방지)."""
+    W, H = 1920, 1080
+    avail_top, avail_bottom, top_reserved, bottom_reserved = mv.disc_avail_zone(
+        H, W, 1.0, False, "top", False, True, "top", 180.0)
+    assert top_reserved is False
+    assert bottom_reserved is False
+
+
+def test_disc_vertical_reservation_is_bidirectional_and_independent_per_edge():
+    """진행바와 캡션이 서로 다른 변에 있어도(예: 진행바 top + 캡션 bottom, 혹은
+    그 반대) 각 변이 독립적으로 예약되는지 확인 — 한쪽 변의 캡션이 반대쪽 변의
+    '캡션 없는 진행바 단독' 예약을 막지 않는다."""
+    W, H = 1920, 1080
+    scale = 1.0
+
+    # 캡션 bottom + 진행바 top: 위쪽엔 진행바만(캡션 없음), 아래쪽엔 캡션만
+    rt, rb = mv.disc_vertical_reservation(H, scale, True, "bottom", True, True, "top", W)
+    assert rt > 0  # 상단: 진행바 단독 예약
+    assert rb > 0  # 하단: 캡션 예약
+
+    # 캡션 top + 진행바 bottom (반대 조합)
+    rt2, rb2 = mv.disc_vertical_reservation(H, scale, True, "top", True, True, "bottom", W)
+    assert rt2 > 0
+    assert rb2 > 0
+
+    # 캡션 bottom, 진행바 없음 -> 상단은 전혀 예약되지 않음
+    rt3, rb3 = mv.disc_vertical_reservation(H, scale, True, "bottom", True, False, "bottom", W)
+    assert rt3 == 0
+    assert rb3 > 0
+
+
+def test_disc_never_clipped_in_all_six_top_bottom_combinations():
+    """제품 오너 요구사항: 캡션/진행바가 top/bottom 어떤 조합으로 있든(둘 다 top,
+    둘 다 bottom, 서로 반대, 진행바 없이 캡션만) 디스크는 항상 리터럴 프레임
+    경계([0, H]) 안에 완전히 들어가야 한다(클리핑 없음) — render() 과 같은 계산
+    (disc_vertical_reservation + disc_stack_layout, round 6) 을 그대로 재현해
+    검증한다. round 6 이후로는 디스크가 avail_top/avail_bottom(옛 앵커 모델의
+    여백)이 아니라 disc_stack_layout() 의 스택 중앙정렬을 따르므로, "예약 안 된
+    쪽" 여백은 avail_* 값과 달라질 수 있다(의도된 동작 — 프레임 경계만 절대
+    기준) — 다만 "예약된 쪽"은 여전히 DISC_RESERVED_GAP 만큼의 타이트한 간격을
+    유지해야 하므로 그쪽은 avail_top/avail_bottom 대비로도 확인한다."""
+    W, H = 1920, 1080
+    combos = [
+        ("top", "top", True), ("top", "bottom", True),
+        ("bottom", "top", True), ("bottom", "bottom", True),
+        ("top", "top", False), ("bottom", "bottom", False),
+    ]
+    D0 = mv.disc_diameter(mv.get_layout(False))
+    for cap_pos, pb_pos, pb_on in combos:
+        avail_top, avail_bottom, top_reserved, bottom_reserved = mv.disc_avail_zone(
+            H, W, 1.0, True, cap_pos, True, pb_on, pb_pos, 180.0)
+        assert (top_reserved or bottom_reserved) is True, (cap_pos, pb_pos, pb_on)
+        assert avail_top < avail_bottom, (cap_pos, pb_pos, pb_on)
+
+        D = D0
+        shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+        if shrink < 1.0:
+            D = int(D * shrink)
+            D -= D % 2
+            D = max(D, 2)
+        reserved_top, reserved_bottom = mv.disc_vertical_reservation(
+            H, 1.0, True, cap_pos, True, pb_on, pb_pos, W)
+        stack_shift, cy = mv.disc_stack_layout(
+            H, 1.0, reserved_top, reserved_bottom, top_reserved, bottom_reserved, D)
+        assert cy is not None
+        half = D // 2
+
+        assert cy - half >= 0, (cap_pos, pb_pos, pb_on, cy, half)
+        assert cy + half <= H, (cap_pos, pb_pos, pb_on, cy, half, H)
+        if top_reserved:
+            assert cy - half >= avail_top, (cap_pos, pb_pos, pb_on, cy, half, avail_top)
+        if bottom_reserved:
+            assert cy + half <= avail_bottom, (cap_pos, pb_pos, pb_on, cy, half, avail_bottom)
+
+
+def test_disc_stack_layout_single_edge_symmetric_both_edges_still_center():
+    """Round 6 핵심 구분: 캡션/진행바가 같은 변에만 있으면(top+top, bottom+bottom
+    등 단일 변) 디스크+묶음 전체가 프레임에서 대칭으로 중앙정렬되고(묶음 위(또는
+    아래) 바깥 여백 == 디스크 반대쪽 바깥 여백), 서로 다른 변에 있으면(top+bottom,
+    bottom+top) 여전히 두 묶음 사이 정중앙에 온다. 제품 오너가 확인한 버그
+    (단일 변인데도 디스크만 예약 경계에 딱 붙고 반대쪽에 여유가 전부 쏠림,
+    sample/screen.png)가 다시 생기지 않는지 직접 구분해서 확인한다."""
+    W, H = 1920, 1080
+    D0 = mv.disc_diameter(mv.get_layout(False))
+    reserved_gap = int(round(mv.DISC_RESERVED_GAP * 1.0))
+
+    def layout_for(cap_pos, pb_pos):
+        avail_top, avail_bottom, top_r, bottom_r = mv.disc_avail_zone(
+            H, W, 1.0, True, cap_pos, True, True, pb_pos, 180.0)
+        D = D0
+        shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, "classic")
+        if shrink < 1.0:
+            D = int(D * shrink)
+            D -= D % 2
+        reserved_top, reserved_bottom = mv.disc_vertical_reservation(
+            H, 1.0, True, cap_pos, True, True, pb_pos, W)
+        stack_shift, cy = mv.disc_stack_layout(
+            H, 1.0, reserved_top, reserved_bottom, top_r, bottom_r, D)
+        return top_r, bottom_r, D, reserved_top, reserved_bottom, stack_shift, cy
+
+    # 단일 변(top 만, 캡션+진행바 모두 top): 묶음↔디스크 간격은 타이트(reserved_gap),
+    # 묶음 위쪽 바깥 여백(=stack_shift)이 디스크 아래쪽 -> 프레임 바닥 여백과 같다.
+    top_r, bottom_r, D, reserved_top, reserved_bottom, stack_shift, cy = layout_for("top", "top")
+    assert (top_r, bottom_r) == (True, False)
+    half = D // 2
+    disc_top, disc_bottom = cy - half, cy + half
+    assert (disc_top - stack_shift) - reserved_top == reserved_gap  # 타이트 간격 보존
+    assert abs((H - disc_bottom) - stack_shift) <= 1  # 대칭: 위 여백 == 아래 여백(반올림 오차 허용)
+    assert stack_shift > 0  # 실제로 남는 여유가 있어 이 검증이 의미있음
+    # 옛 버그(앵커만, 반대쪽에 전부 몰림) 재현값과 달라야 한다
+    old_buggy_cy = reserved_top + reserved_gap + half
+    assert cy != old_buggy_cy
+
+    # 단일 변(bottom 만) — 대칭 미러: 디스크 위쪽 바깥 여백(=stack_shift)이 하단
+    # 묶음 실제 상단(H-reserved_bottom-stack_shift) -> 디스크 하단 간의 타이트한
+    # 간격과 대칭을 이룬다(정수 나눗셈 반올림으로 ±1px 오차 허용).
+    top_r2, bottom_r2, D2, rt2, rb2, shift2, cy2 = layout_for("bottom", "bottom")
+    assert (top_r2, bottom_r2) == (False, True)
+    half2 = D2 // 2
+    disc_top2, disc_bottom2 = cy2 - half2, cy2 + half2
+    assert disc_top2 == shift2  # 디스크 위쪽 바깥 여백 == stack_shift(대칭 중앙정렬)
+    group_top_edge2 = H - rb2 - shift2  # 하단 묶음이 실제로 이동한 뒤의 상단 y
+    assert abs((group_top_edge2 - disc_bottom2) - reserved_gap) <= 1  # 타이트 간격 보존
+    assert shift2 > 0  # 실제로 남는 여유가 있어 이 검증이 의미있음
+    old_buggy_cy2 = H - rb2 - reserved_gap - half2
+    assert cy2 != old_buggy_cy2  # 옛 버그(앵커만, 반대쪽에 전부 몰림) 재현값과 달라야 한다
+
+    # 양쪽 변(top 캡션 + bottom 진행바) — 여전히 두 묶음 사이 정중앙
+    top_r3, bottom_r3, D3, rt3, rb3, shift3, cy3 = layout_for("top", "bottom")
+    assert (top_r3, bottom_r3) == (True, True)
+    avail_top3, avail_bottom3, _, _ = mv.disc_avail_zone(
+        H, W, 1.0, True, "top", True, True, "bottom", 180.0)
+    assert avail_top3 < cy3 < avail_bottom3
+
+
+def test_disc_shrink_factor_clamps_when_theme_extent_exceeds_avail_zone():
+    """disc_shrink_factor() 의 핵심 축소 수식 검증: 가용 세로 구간보다 테마 조합
+    (classic/square_spin/lp_vinyl/text_ring)의 최대 확장치가 더 크면, 축소 배율을
+    적용한 뒤의 확장치가 그 구간을 넘지 않아야 한다(1920x1080 기준 D, 인위적으로
+    좁힌 300px 짜리 존으로 축소가 실제로 필요한 상황을 재현)."""
+    import math
+    D = mv.disc_diameter(mv.get_layout(False))  # 1920x1080 기본 D
+    avail_top, avail_bottom = 400, 700  # 300px 짜리 좁은 존
+    vzone = avail_bottom - avail_top
+    for theme in ("classic", "square_spin", "lp_vinyl", "text_ring"):
+        shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, theme)
+        assert 0 < shrink <= 1.0
+        D_shrunk = int(D * shrink)
+        D_shrunk -= D_shrunk % 2
+        D_shrunk = max(D_shrunk, 2)
+        if theme == "square_spin":
+            extent = int(math.ceil(D_shrunk * math.sqrt(2)))
+            extent += extent % 2
+        elif theme == "lp_vinyl":
+            extent = int(D_shrunk * mv.LP_VINYL_SIZE_SCALE)
+            extent -= extent % 2
+        elif theme == "text_ring":
+            extent = int(D_shrunk * mv.TEXT_RING_SCALE)
+            extent -= extent % 2
+        else:
+            extent = D_shrunk
+        assert extent <= vzone + 2, (theme, extent, vzone)  # 짝수 보정 반올림 오차(최대 ±2px) 허용
+
+
+def test_disc_shrink_factor_noop_when_theme_extent_already_fits():
+    """이미 여유 공간 안에 들어가면(오버플로가 아니면) 배율은 정확히 1.0 이어야
+    한다 — 불필요하게 축소하지 않는다(기본 1920x1080, 예약 없음 케이스에서
+    lp_vinyl/text_ring/square_spin 모두 실제로 여유 안에 들어가는지도 함께 확인)."""
+    lay = mv.get_layout(False)  # 1920x1080
+    W, H = lay["W"], lay["H"]
+    D = mv.disc_diameter(lay)
+    avail_top, avail_bottom, top_reserved, bottom_reserved = mv.disc_avail_zone(
+        H, W, 1.0, False, "auto", False, False, "bottom", None)
+    assert top_reserved is False
+    assert bottom_reserved is False
+    for theme in ("classic", "square_spin", "lp_vinyl", "text_ring"):
+        shrink = mv.disc_shrink_factor(D, avail_top, avail_bottom, theme)
+        assert shrink == 1.0, (theme, shrink)
+
+
+def test_title_caption_pos_cli_choice_includes_bottom():
+    """--title-caption-pos 가 이제 "bottom" 도 받는지 확인 (프로덕트 오너 요청:
+    화면 하단에 진행바+제목+아티스트를 앵커하는 레이아웃)."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+    assert 'choices=["auto", "top", "bottom"]' in main_src
 
 
 # ---------- lp_vinyl: 커버+비닐 조합의 수평 중앙 정렬 / 상대 크기 --------------
@@ -864,20 +1599,38 @@ def test_lp_vinyl_render_branch_centers_combined_bounding_box_source():
     """render() 의 lp_vinyl 분기가 커버만이 아니라 '커버+비닐 조합'의 바운딩
     박스를 프레임 중앙에 맞추는 공식을 실제로 쓰는지 소스 레벨로 확인한다
     (제품 오너 피드백: 비닐이 화면 오른쪽 끝까지 삐져나와 조합 전체가 오른쪽으로
-    쏠려 보였다 — sample/playscreen.png)."""
+    쏠려 보였다 — sample/playscreen.png). --disc-lp-side 로 좌/우 모두 지원해야
+    하는 후속 요구사항 때문에, 수기 bbox_shift 공식은 min/max 기반의
+    lp_vinyl_cover_center_x() 순수 함수 호출로 대체됐다."""
     import inspect
     render_src = inspect.getsource(mv.render)
     lp_branch = render_src.split(
         'elif disc_theme == "lp_vinyl" and vinyl_png and cover_png:')[1].split(
         'elif disc_theme == "text_ring"')[0]
-    assert "bbox_shift" in lp_branch
-    assert "cover_cx = W // 2 - bbox_shift" in lp_branch
+    assert "cover_cx = lp_vinyl_cover_center_x(W, D_lp, VD, off_x)" in lp_branch
+    assert "disc_lp_side" in lp_branch  # 좌/우 방향 인자가 실제로 쓰인다
 
 
-def test_lp_vinyl_bounding_box_centering_formula_is_centered():
-    """cover_cx = W/2 - bbox_shift 공식(render() 의 lp_vinyl 분기와 동일)이
-    실제로 '커버 왼쪽 끝 ~ 비닐 오른쪽 끝' 바운딩박스를 프레임 중앙에 놓는지
-    여러 해상도/방향에서 직접 계산해 검증한다."""
+def test_lp_vinyl_render_branch_off_x_formula_is_additive_and_signed():
+    """off_x 계산이 (1) LP_VINYL_OFFSET 비율 + LP_VINYL_OFFSET_NUDGE_PX 고정
+    픽셀(스케일 보정)의 합이고 (2) --disc-lp-side 에 따라 부호가 뒤집히는지
+    소스 레벨로 확인한다."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    lp_branch = render_src.split(
+        'elif disc_theme == "lp_vinyl" and vinyl_png and cover_png:')[1].split(
+        'elif disc_theme == "text_ring"')[0]
+    assert "LP_VINYL_OFFSET_NUDGE_PX" in lp_branch
+    assert 'off_x = off_mag if disc_lp_side != "left" else -off_mag' in lp_branch
+
+
+def test_lp_vinyl_cover_center_x_centers_bbox_for_both_sides():
+    """lp_vinyl_cover_center_x() 가 --disc-lp-side "right"/"left" 양쪽에서(부호만
+    다른 off_x, 넛지 픽셀 포함) 실제로 '커버+비닐 조합'의 바운딩박스를 프레임
+    가로 중앙에 놓는지 여러 해상도/방향에서 직접 계산해 검증한다 — 어느 쪽이
+    바운딩박스 경계를 결정하는지 하드코딩하지 않고 min/max 로 구하므로 두 부호
+    모두 성립해야 한다."""
+    scale = 1.0
     for shorts in (False, True):
         lay = mv.get_layout(shorts)
         W = lay["W"]
@@ -886,13 +1639,106 @@ def test_lp_vinyl_bounding_box_centering_formula_is_centered():
         D_lp -= D_lp % 2
         VD = int(D_lp * mv.LP_VINYL_SCALE)
         VD -= VD % 2
-        off_x = int(D_lp * mv.LP_VINYL_OFFSET)
-        bbox_shift = (off_x + VD // 2 - D_lp // 2) // 2
-        cover_cx = W // 2 - bbox_shift
-        left = cover_cx - D_lp // 2          # 커버 왼쪽 끝
-        right = cover_cx + off_x + VD // 2   # 비닐 오른쪽 끝
-        center = (left + right) / 2
-        assert abs(center - W / 2) <= 1  # 반올림 오차 이내로 프레임 중앙
+        off_mag = int(D_lp * mv.LP_VINYL_OFFSET) + int(round(mv.LP_VINYL_OFFSET_NUDGE_PX * scale))
+        for off_x in (off_mag, -off_mag):
+            cover_cx = mv.lp_vinyl_cover_center_x(W, D_lp, VD, off_x)
+            cover_left, cover_right = cover_cx - D_lp // 2, cover_cx + D_lp // 2
+            vinyl_left, vinyl_right = cover_cx + off_x - VD // 2, cover_cx + off_x + VD // 2
+            bbox_left = min(cover_left, vinyl_left)
+            bbox_right = max(cover_right, vinyl_right)
+            center = (bbox_left + bbox_right) / 2
+            assert abs(center - W / 2) <= 1, (shorts, off_x, center, W / 2)
+
+
+def test_lp_vinyl_cover_center_x_right_left_are_mirror_images():
+    """"right"(양의 off_x)와 "left"(음의 off_x)는 서로 수평 미러 관계여야 한다 —
+    cover_cx 가 W/2 기준으로 대칭이어야(반올림 오차 이내) 실제 렌더에서 좌우
+    방향이 정확히 뒤집혀 보인다."""
+    W = 1920
+    D_lp, VD = 588, 564
+    off_mag = 310
+    cx_right = mv.lp_vinyl_cover_center_x(W, D_lp, VD, off_mag)
+    cx_left = mv.lp_vinyl_cover_center_x(W, D_lp, VD, -off_mag)
+    assert abs((cx_right - W / 2) - (W / 2 - cx_left)) <= 1
+
+
+def test_lp_vinyl_offset_nudge_is_additive_and_scale_aware():
+    """제품 오너 피드백("비닐이 조금 더 삐져나와도 될 것 같아"): 비율(LP_VINYL_OFFSET)
+    은 레퍼런스 실측 근거가 있어 그대로 두고, 그 위에 스케일 보정된 고정 픽셀
+    (LP_VINYL_OFFSET_NUDGE_PX)이 순수 additive 로 더해져야 한다 — 그리고 그 넛지
+    자체도 scale 에 비례해야 한다(고정 10px 를 그냥 더하기만 하면 해상도가 커져도
+    항상 10px 라 상대적으로 점점 안 보이게 된다)."""
+    assert mv.LP_VINYL_OFFSET_NUDGE_PX > 0
+    D_lp = 600  # 임의의 고정값(스케일과 무관하게 순수 공식만 검증)
+    ratio_part = int(D_lp * mv.LP_VINYL_OFFSET)
+    for scale in (1.0, 2 / 3, 2.0):
+        nudge = int(round(mv.LP_VINYL_OFFSET_NUDGE_PX * scale))
+        off_mag = ratio_part + nudge
+        assert off_mag - ratio_part == nudge  # 비율 파트와 완전히 분리된 additive 값
+        assert off_mag > ratio_part  # 항상 비율 파트보다 커야 함(+ 넛지)
+    small = int(round(mv.LP_VINYL_OFFSET_NUDGE_PX * 0.5))
+    large = int(round(mv.LP_VINYL_OFFSET_NUDGE_PX * 2.0))
+    assert large > small  # 스케일에 비례(고정 픽셀이 아님)
+
+
+def test_disc_lp_side_cli_choice_declared_with_right_default():
+    """--disc-lp-side 가 choices=["left","right"], default="right" 로 선언되어
+    있는지 확인 — 기본값이 기존 동작(항상 오른쪽으로만 삐져나옴)과 정확히
+    일치해야 한다(하위 호환)."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+    assert 'choices=["left", "right"], default="right"' in main_src
+
+
+# ---------- text_ring: --disc-ring-side (lp_vinyl 의 --disc-lp-side 와는 별개) ----
+
+def test_disc_ring_side_cli_choice_declared_with_left_default():
+    """--disc-ring-side 가 choices=["left","right"], default="left" 로 선언되어
+    있는지 확인 — 기본값이 기존 동작(항상 왼쪽으로만 삐져나옴)과 정확히
+    일치해야 한다(하위 호환). --disc-lp-side 와는 완전히 독립된 별개 플래그다."""
+    import inspect
+    main_src = inspect.getsource(mv.main)
+    assert 'choices=["left", "right"], default="left"' in main_src
+
+
+def test_render_text_ring_branch_uses_signed_off_x_for_ring_side():
+    """render() 의 text_ring 분기가 off_mag(항상 양수) + disc_ring_side 부호로
+    off_x 를 결정하는지, 그리고 커버 위치(cover_cx)는 W/2 고정으로 disc_ring_side
+    와 무관한지 소스 레벨로 확인한다(lp_vinyl 과 달리 별도 bbox 재중앙 계산이
+    필요 없다는 설계 판단의 근거)."""
+    import inspect
+    render_src = inspect.getsource(mv.render)
+    tr_branch = render_src.split(
+        'elif disc_theme == "text_ring" and ring_png and cover_png:')[1].split(
+        "# 자막 burn-in")[0]
+    assert 'off_x = off_mag if disc_ring_side == "right" else -off_mag' in tr_branch
+    assert "cover_cx = (W - D) // 2 + D // 2" in tr_branch  # W/2, disc_ring_side 와 무관
+
+
+def test_text_ring_cover_position_unchanged_ring_mirrors_between_sides():
+    """--disc-ring-side left/right 는 링의 노출 방향만 좌우로 뒤집어야 하고,
+    커버 자체의 위치(cover_cx)는 절대 움직이면 안 된다(text_ring 은 lp_vinyl 과
+    달리 커버가 항상 화면 중앙 고정 — round 5 보고에서 렌더로 확인한 설계).
+    링 중심은 커버 중심을 기준으로 좌우 대칭이어야 한다."""
+    W = 1920
+    D = 452
+    cover_cx = (W - D) // 2 + D // 2
+    assert cover_cx == W // 2
+
+    off_mag = int(D * mv.TEXT_RING_OFFSET)
+    RD = int(D * mv.TEXT_RING_SCALE)
+    RD -= RD % 2
+
+    ring_centers = {}
+    for side in ("left", "right"):
+        off_x = off_mag if side == "right" else -off_mag
+        rx = cover_cx + off_x - RD // 2
+        ring_centers[side] = rx + RD // 2
+
+    # 커버 위치는 두 방향 모두 동일(=W/2, 위에서 이미 확인)
+    # 링 중심은 커버 중심 기준 정확히 반대 방향으로 대칭
+    assert ring_centers["right"] - cover_cx == cover_cx - ring_centers["left"]
+    assert ring_centers["left"] < cover_cx < ring_centers["right"]
 
 
 def test_lp_vinyl_cover_only_slightly_bigger_than_vinyl():

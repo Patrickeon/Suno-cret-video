@@ -215,10 +215,15 @@ export const DISC_STYLE_PRESETS: DiscStylePreset[] = [
     id: "sample_lp_vinyl",
     label: "LP 바이닐",
     emoji: "💿",
-    description: "커버 뒤로 비닐이 삐져나오는 구도 + 블러 배경(글로우) + 화면 상단 제목/아티스트",
+    description: "커버 뒤로 비닐이 삐져나오는 구도 + 블러 배경(글로우) + 화면 하단 제목/아티스트",
     apply: {
+      // 디스크(커버+비닐 조합)가 커서 상단 배치 시 프레임 하단으로 잘려 나가는
+      // 문제(제품 오너 피드백: "앨범이미지가 화면 밖으로 나가")가 있었다 — 캡션을
+      // 하단으로 옮기면 make_mv.py 의 새 상/하단 예약 로직이 디스크를 남는 공간의
+      // 중앙으로 재배치하고 필요시 자동 축소해 겹침/클리핑 없이 always-centered
+      // 를 보장한다.
       disc: true, discTheme: "lp_vinyl", discBgStyle: "glow",
-      titleCaption: true, titleCaptionPos: "top",
+      titleCaption: true, titleCaptionPos: "bottom",
       progressBar: false, progressBarPos: "bottom",
     },
   },

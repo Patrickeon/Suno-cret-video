@@ -55,8 +55,11 @@ export default function Home() {
   const [discRingText, setDiscRingText] = useState(""); // text_ring 테마 전용 커스텀 문구
   const [discArtFile, setDiscArtFile] = useState<File | null>(null); // 레코드 커버 전용 이미지(선택)
   const [discLpArtFile, setDiscLpArtFile] = useState<File | null>(null); // lp_vinyl 라벨 전용 이미지(선택, 비우면 커버와 동일)
+  const [discLpSide, setDiscLpSide] = useState("right"); // lp_vinyl 전용: 비닐이 삐져나오는 방향(left/right, 기본 right)
+  const [discRingSide, setDiscRingSide] = useState("left"); // text_ring 전용: 텍스트 링이 삐져나오는 방향(left/right, 기본 left)
   const [progressBar, setProgressBar] = useState(false);
   const [progressBarPos, setProgressBarPos] = useState("bottom"); // 진행바 위치: bottom/top
+  const [progressBarColor, setProgressBarColor] = useState(""); // ""=파형 색(viz 색상) 그대로 따라감
   const [subPreview, setSubPreview] = useState(true); // 다음 소절 미리보기
   const [visualMode, setVisualMode] = useState<VisualMode>("playlist"); // 비주얼 모드 (플레이리스트/하이브리드/뮤직비디오)
   const [paletteBusy, setPaletteBusy] = useState(false);
@@ -250,8 +253,8 @@ export default function Home() {
     const name = window.prompt("프리셋 이름을 입력하세요")?.trim();
     if (!name) return;
     const snap = {
-      viz, vizColor, bgGrad, disc, discBgStyle, discTheme, discRingText,
-      progressBar, progressBarPos, subPreview,
+      viz, vizColor, bgGrad, disc, discBgStyle, discTheme, discRingText, discLpSide, discRingSide,
+      progressBar, progressBarPos, progressBarColor, subPreview,
       shorts, kenburns, bgColor, artist, watermark, align, res, fps,
       normalize, master, karaoke, fadeIn, fadeOut, vignette, filmGrain,
       sparkle, outroCta, outroCtaText, titleCaption, titleCaptionPos,
@@ -274,8 +277,11 @@ export default function Home() {
     setDiscBgStyle(str("discBgStyle", "off"));
     setDiscTheme(str("discTheme", "classic"));
     setDiscRingText(str("discRingText", ""));
+    setDiscLpSide(str("discLpSide", "right"));
+    setDiscRingSide(str("discRingSide", "left"));
     setProgressBar(b("progressBar", false));
     setProgressBarPos(str("progressBarPos", "bottom"));
+    setProgressBarColor(str("progressBarColor", ""));
     setSubPreview(b("subPreview", true));
     setShorts(b("shorts", false));
     setKenburns(b("kenburns", true));
@@ -390,10 +396,13 @@ export default function Home() {
       if (discBgStyle !== "off") fd.append("disc_bg_style", discBgStyle);
       if (discTheme !== "classic") fd.append("disc_theme", discTheme);
       if (discRingText.trim()) fd.append("disc_ring_text", discRingText.trim());
+      if (discLpSide !== "right") fd.append("disc_lp_side", discLpSide);
+      if (discRingSide !== "left") fd.append("disc_ring_side", discRingSide);
       if (discArtFile) fd.append("disc_art", discArtFile);
       if (discLpArtFile) fd.append("disc_lp_art", discLpArtFile);
       fd.append("progress_bar", String(progressBar));
       if (progressBarPos !== "bottom") fd.append("progress_bar_pos", progressBarPos);
+      if (progressBarColor) fd.append("progress_bar_color", progressBarColor);
       fd.append("sub_preview", String(subPreview));
       fd.append("visual_mode", visualMode);
       fd.append("shorts", String(shorts));
@@ -461,10 +470,13 @@ export default function Home() {
       if (discBgStyle !== "off") fd.append("disc_bg_style", discBgStyle);
       if (discTheme !== "classic") fd.append("disc_theme", discTheme);
       if (discRingText.trim()) fd.append("disc_ring_text", discRingText.trim());
+      if (discLpSide !== "right") fd.append("disc_lp_side", discLpSide);
+      if (discRingSide !== "left") fd.append("disc_ring_side", discRingSide);
       if (discArtFile) fd.append("disc_art", discArtFile);
       if (discLpArtFile) fd.append("disc_lp_art", discLpArtFile);
       fd.append("progress_bar", String(progressBar));
       if (progressBarPos !== "bottom") fd.append("progress_bar_pos", progressBarPos);
+      if (progressBarColor) fd.append("progress_bar_color", progressBarColor);
       fd.append("sub_preview", String(subPreview));
       fd.append("visual_mode", visualMode);
       fd.append("res", res);
@@ -1146,6 +1158,14 @@ export default function Home() {
                     onFiles={(fs) => setDiscLpArtFile(fs[0] ?? null)}
                   />
                 )}
+                {disc && discTheme === "lp_vinyl" && (
+                  <Field label="비닐 삐져나오는 방향">
+                    <select value={discLpSide} onChange={(e) => setDiscLpSide(e.target.value)} className={inputCls}>
+                      <option value="right">오른쪽 (기본)</option>
+                      <option value="left">왼쪽</option>
+                    </select>
+                  </Field>
+                )}
                 {disc && (
                   <Field label="레코드 테마">
                     <select
@@ -1194,6 +1214,14 @@ export default function Home() {
                     />
                   </Field>
                 )}
+                {disc && discTheme === "text_ring" && (
+                  <Field label="텍스트 링 삐져나오는 방향">
+                    <select value={discRingSide} onChange={(e) => setDiscRingSide(e.target.value)} className={inputCls}>
+                      <option value="left">왼쪽 (기본)</option>
+                      <option value="right">오른쪽</option>
+                    </select>
+                  </Field>
+                )}
                 <Toggle checked={progressBar} onChange={setProgressBar} label="⏳ 곡 진행바 (하단 얇은 라인)" />
                 {progressBar && (
                   <Field label="진행바 위치">
@@ -1201,6 +1229,27 @@ export default function Home() {
                       <option value="bottom">하단</option>
                       <option value="top">상단</option>
                     </select>
+                  </Field>
+                )}
+                {progressBar && (
+                  <Field label="진행바 색 (선택 — 비우면 파형 색을 그대로 따라감)">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={`#${progressBarColor || "7DD3FC"}`}
+                        onChange={(e) => setProgressBarColor(e.target.value.slice(1).toUpperCase())}
+                        className="h-9 w-16 cursor-pointer rounded-lg bg-[var(--surface-2)] ring-1 ring-[var(--border)]"
+                      />
+                      {progressBarColor && (
+                        <button
+                          type="button"
+                          onClick={() => setProgressBarColor("")}
+                          className="text-[11px] text-[var(--text-faint)] underline"
+                        >
+                          기본값으로 (파형 색)
+                        </button>
+                      )}
+                    </div>
                   </Field>
                 )}
               </Card>
@@ -1229,6 +1278,7 @@ export default function Home() {
                     <select value={titleCaptionPos} onChange={(e) => setTitleCaptionPos(e.target.value)} className={inputCls}>
                       <option value="auto">자동 (레코드 모드면 디스크 바로 아래)</option>
                       <option value="top">화면 상단 (레코드 모드여도 항상 위)</option>
+                      <option value="bottom">화면 하단 (레코드 모드여도 항상 아래)</option>
                     </select>
                   </Field>
                 )}

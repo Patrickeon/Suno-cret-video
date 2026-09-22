@@ -56,10 +56,16 @@ def build_command(job_dir, audio, lyrics, bg_list, opts):
         cmd += ["--disc-theme", str(opts["disc_theme"])]
     if opts.get("disc_ring_text"):
         cmd += ["--disc-ring-text", str(opts["disc_ring_text"])]
+    if opts.get("disc_lp_side") and opts["disc_lp_side"] != "right":
+        cmd += ["--disc-lp-side", str(opts["disc_lp_side"])]
+    if opts.get("disc_ring_side") and opts["disc_ring_side"] != "left":
+        cmd += ["--disc-ring-side", str(opts["disc_ring_side"])]
     if opts.get("progress_bar"):
         cmd += ["--progress-bar"]
     if opts.get("progress_bar_pos") and opts["progress_bar_pos"] != "bottom":
         cmd += ["--progress-bar-pos", str(opts["progress_bar_pos"])]
+    if opts.get("progress_bar_color"):
+        cmd += ["--progress-bar-color", str(opts["progress_bar_color"])]
     if opts.get("title_caption"):
         cmd += ["--title-caption"]
     if opts.get("title_caption_pos") and opts["title_caption_pos"] != "auto":

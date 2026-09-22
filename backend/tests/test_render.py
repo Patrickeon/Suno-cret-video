@@ -228,6 +228,31 @@ def test_disc_ring_text_omitted_when_empty():
     assert "--disc-ring-text" not in cmd
 
 
+def test_disc_lp_side_omitted_by_default():
+    # disc_lp_side 미지정 또는 "right"(기본값)이면 플래그를 붙이지 않는다 (하위 호환)
+    assert "--disc-lp-side" not in _build({"disc": True, "disc_theme": "lp_vinyl"})
+    assert "--disc-lp-side" not in _build(
+        {"disc": True, "disc_theme": "lp_vinyl", "disc_lp_side": "right"})
+
+
+def test_disc_lp_side_forwarded():
+    cmd = _build({"disc": True, "disc_theme": "lp_vinyl", "disc_lp_side": "left"})
+    assert cmd[cmd.index("--disc-lp-side") + 1] == "left"
+
+
+def test_disc_ring_side_omitted_by_default():
+    # disc_ring_side 미지정 또는 "left"(기본값)이면 플래그를 붙이지 않는다
+    # (하위 호환) — disc_lp_side 와는 독립된 별개 옵션.
+    assert "--disc-ring-side" not in _build({"disc": True, "disc_theme": "text_ring"})
+    assert "--disc-ring-side" not in _build(
+        {"disc": True, "disc_theme": "text_ring", "disc_ring_side": "left"})
+
+
+def test_disc_ring_side_forwarded():
+    cmd = _build({"disc": True, "disc_theme": "text_ring", "disc_ring_side": "right"})
+    assert cmd[cmd.index("--disc-ring-side") + 1] == "right"
+
+
 def test_progress_bar_pos_omitted_by_default():
     assert "--progress-bar-pos" not in _build({"progress_bar": True})
     assert "--progress-bar-pos" not in _build({"progress_bar": True, "progress_bar_pos": "bottom"})
@@ -236,6 +261,19 @@ def test_progress_bar_pos_omitted_by_default():
 def test_progress_bar_pos_forwarded():
     cmd = _build({"progress_bar": True, "progress_bar_pos": "top"})
     assert cmd[cmd.index("--progress-bar-pos") + 1] == "top"
+
+
+def test_progress_bar_color_omitted_when_unset():
+    # progress_bar_color 미지정 또는 빈 문자열이면 플래그를 붙이지 않는다
+    # (기본: viz_color[0] 폴백, disc_ring_text/"" 미설정 패턴과 동일)
+    assert "--progress-bar-color" not in _build({"progress_bar": True})
+    assert "--progress-bar-color" not in _build(
+        {"progress_bar": True, "progress_bar_color": ""})
+
+
+def test_progress_bar_color_forwarded():
+    cmd = _build({"progress_bar": True, "progress_bar_color": "FF0000"})
+    assert cmd[cmd.index("--progress-bar-color") + 1] == "FF0000"
 
 
 def test_title_caption_forwarded_and_omitted_by_default():
@@ -318,6 +356,69 @@ def test_render_endpoint_forwards_disc_theme_and_ring_text(monkeypatch):
     job = main_module.jobs.get(jid)
     assert job["opts"]["disc_theme"] == "text_ring"
     assert job["opts"]["disc_ring_text"] == "MY BAND"
+
+
+def test_render_endpoint_forwards_disc_lp_side(monkeypatch):
+    # /api/render 가 disc_lp_side Form 필드를 받아 job opts 에 그대로 저장하는지
+    # (main.py Form 파싱 -> opts dict 경로) 확인 — render.build_command 로의
+    # opts -> CLI 매핑은 test_disc_lp_side_forwarded 가 별도로 커버한다.
+    client, main_module = _sync_render_client(monkeypatch)
+    r = _post_render(client, disc_theme="lp_vinyl", disc_lp_side="left")
+    assert r.status_code == 200
+    jid = r.json()["job_id"]
+    job = main_module.jobs.get(jid)
+    assert job["opts"]["disc_lp_side"] == "left"
+
+
+def test_render_endpoint_defaults_disc_lp_side_to_right(monkeypatch):
+    client, main_module = _sync_render_client(monkeypatch)
+    r = _post_render(client)  # disc_lp_side 미전송 → 기본값 "right"
+    assert r.status_code == 200
+    jid = r.json()["job_id"]
+    job = main_module.jobs.get(jid)
+    assert job["opts"]["disc_lp_side"] == "right"
+
+
+def test_render_endpoint_forwards_disc_ring_side(monkeypatch):
+    # /api/render 가 disc_ring_side Form 필드를 받아 job opts 에 그대로 저장하는지
+    # (main.py Form 파싱 -> opts dict 경로) 확인 — opts -> CLI 매핑은
+    # test_disc_ring_side_forwarded 가 별도로 커버한다.
+    client, main_module = _sync_render_client(monkeypatch)
+    r = _post_render(client, disc_theme="text_ring", disc_ring_side="right")
+    assert r.status_code == 200
+    jid = r.json()["job_id"]
+    job = main_module.jobs.get(jid)
+    assert job["opts"]["disc_ring_side"] == "right"
+
+
+def test_render_endpoint_defaults_disc_ring_side_to_left(monkeypatch):
+    client, main_module = _sync_render_client(monkeypatch)
+    r = _post_render(client)  # disc_ring_side 미전송 → 기본값 "left"
+    assert r.status_code == 200
+    jid = r.json()["job_id"]
+    job = main_module.jobs.get(jid)
+    assert job["opts"]["disc_ring_side"] == "left"
+
+
+def test_render_endpoint_forwards_progress_bar_color(monkeypatch):
+    # /api/render 가 progress_bar_color Form 필드를 받아 job opts 에 그대로
+    # 저장하는지(main.py Form 파싱 -> opts dict 경로) 확인 — opts -> CLI 매핑은
+    # test_progress_bar_color_forwarded 가 별도로 커버한다.
+    client, main_module = _sync_render_client(monkeypatch)
+    r = _post_render(client, progress_bar_color="FF0000")
+    assert r.status_code == 200
+    jid = r.json()["job_id"]
+    job = main_module.jobs.get(jid)
+    assert job["opts"]["progress_bar_color"] == "FF0000"
+
+
+def test_render_endpoint_defaults_progress_bar_color_to_empty(monkeypatch):
+    client, main_module = _sync_render_client(monkeypatch)
+    r = _post_render(client)  # progress_bar_color 미전송 → 기본값 ""(자동)
+    assert r.status_code == 200
+    jid = r.json()["job_id"]
+    job = main_module.jobs.get(jid)
+    assert job["opts"]["progress_bar_color"] == ""
 
 
 # --- /api/album-cover 엔드포인트 ---
